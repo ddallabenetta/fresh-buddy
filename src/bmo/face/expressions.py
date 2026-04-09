@@ -1,6 +1,8 @@
-"""Expression Engine for Fresh Buddy Face Animations"""
+"""Expression Engine for Fresh Buddy — cute face with Matrix-green alive animations."""
 
 import logging
+import math
+import random
 import time
 import threading
 from enum import Enum
@@ -8,224 +10,282 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Display dimensions
+W, H = 128, 64
+
+# Face layout — large expressive eyes, centered mouth
+L_EYE   = (32, 21)   # left eye center (x, y)
+R_EYE   = (96, 21)   # right eye center
+EYE_RX  = 11         # eye x-radius
+EYE_RY  = 13         # eye y-radius
+PUPIL_R = 5          # pupil radius
+MOUTH_X = 64         # mouth horizontal center
+MOUTH_Y = 44         # mouth top y
+
 
 class Expression(Enum):
-    """Fresh Buddy facial expressions."""
-    HAPPY = "happy"
-    SAD = "sad"
-    CONFUSED = "confused"
-    EXCITED = "excited"
-    NEUTRAL = "neutral"
-    THINKING = "thinking"
+    HAPPY     = "happy"
+    SAD       = "sad"
+    CONFUSED  = "confused"
+    EXCITED   = "excited"
+    NEUTRAL   = "neutral"
+    THINKING  = "thinking"
     LISTENING = "listening"
-    SLEEPING = "sleeping"
-    SPEAKING = "speaking"
+    SLEEPING  = "sleeping"
+    SPEAKING  = "speaking"
     RECORDING = "recording"
 
 
 class ExpressionEngine:
-    """Manages Fresh Buddy facial expressions and animations."""
+    """Manages Fresh Buddy facial expressions and alive animations."""
 
     def __init__(self, display):
-        """
-        Initialize expression engine.
+        self.display   = display
+        self.current   = Expression.NEUTRAL
+        self._stop     = threading.Event()
+        self._thread: Optional[threading.Thread] = None
 
-        Args:
-            display: OLEDDisplay instance
-        """
-        self.display = display
-        self.current_expression = Expression.NEUTRAL
-        self._animation_thread: Optional[threading.Thread] = None
-        self._stop_animation = threading.Event()
-        self._mouth_open = False
+    # ── public API ───────────────────────────────────────────────
 
-    def show_expression(self, expression: str):
-        """
-        Show a specific expression.
-
-        Args:
-            expression: Expression name (happy, sad, confused, etc.)
-        """
+    def show_expression(self, name: str):
         try:
-            expr = Expression(expression.lower())
+            expr = Expression(name.lower())
         except ValueError:
-            logger.warning(f"Unknown expression: {expression}")
+            logger.warning("Unknown expression: %s", name)
             expr = Expression.NEUTRAL
+        self._switch(expr)
 
-        self.current_expression = expr
-        self._render_expression(expr)
+    def animate_speaking(self, duration: float = 0.1):
+        self._draw_frame(self.current, mouth_override="open")
+        time.sleep(duration)
+        self._draw_frame(self.current)
 
-        # Start idle animation if needed
-        if expr in [Expression.SLEEPING, Expression.THINKING]:
-            self._start_idle_animation(expr)
+    def test_all(self):
+        for expr in Expression:
+            logger.info("Testing: %s", expr.value)
+            self._switch(expr)
+            time.sleep(2.0)
+        self._switch(Expression.NEUTRAL)
 
-    def _render_expression(self, expression: Expression):
-        """Render a static expression to the display."""
+    # ── switching & animation dispatch ───────────────────────────
+
+    def _switch(self, expr: Expression):
+        self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.5)
+        self._stop.clear()
+        self.current = expr
+        self._draw_frame(expr)
+
+        loops = {
+            Expression.SLEEPING: self._loop_sleeping,
+            Expression.SPEAKING: self._loop_speaking,
+            Expression.THINKING: self._loop_thinking,
+        }
+        fn = loops.get(expr, lambda: self._loop_blink(expr))
+        self._thread = threading.Thread(target=fn, daemon=True)
+        self._thread.start()
+
+    # ── frame renderer ───────────────────────────────────────────
+
+    def _draw_frame(self, expr: Expression,
+                    blink: bool = False,
+                    mouth_override: str = None,
+                    think_dots: int = 0):
         self.display.clear()
-
-        # BMO face dimensions (body is rounded rectangle)
-        body_x, body_y = 20, 8
-        body_w, body_h = 88, 48
-
-        # Draw BMO body (rounded rectangle)
-        self._draw_rounded_rect(body_x, body_y, body_w, body_h, 8)
-
-        # Draw screen area (inner rectangle)
-        screen_x, screen_y = body_x + 6, body_y + 6
-        screen_w, screen_h = body_w - 12, body_h - 20
-        self._draw_rounded_rect(screen_x, screen_y, screen_w, screen_h, 4, fill=True)
-
-        # Draw eyes based on expression
-        eye_y = screen_y + 8
-        eye_spacing = 18
-
-        if expression == Expression.SLEEPING:
-            # Sleeping: closed eyes (lines)
-            self._draw_eye_line(screen_x + 18, eye_y + 6, 10)
-            self._draw_eye_line(screen_x + 40, eye_y + 6, 10)
-        elif expression == Expression.CONFUSED:
-            # Confused: one eye open, one closed, eyebrow tilted
-            self._draw_eye_open(screen_x + 15, eye_y)
-            self._draw_eye_line(screen_x + 37, eye_y + 4, 10)
-            # Tilted eyebrow
-            self._draw_line(screen_x + 12, eye_y - 4, screen_x + 22, eye_y - 2)
-            self._draw_line(screen_x + 34, eye_y - 2, screen_x + 44, eye_y - 6)
-        elif expression == Expression.SAD:
-            # Sad: droopy eyes
-            self._draw_eye_open(screen_x + 15, eye_y + 2)
-            self._draw_eye_open(screen_x + 37, eye_y + 2)
-            # Sad mouth
-            self._draw_sad_mouth(screen_x + 20, screen_y + 22)
-        elif expression == Expression.EXCITED:
-            # Excited: big eyes, big smile
-            self._draw_eye_big(screen_x + 14, eye_y - 2)
-            self._draw_eye_big(screen_x + 38, eye_y - 2)
-            self._draw_big_smile(screen_x + 18, screen_y + 20)
-        elif expression == Expression.SPEAKING:
-            # Speaking: animate mouth
-            self._draw_eye_open(screen_x + 15, eye_y)
-            self._draw_eye_open(screen_x + 37, eye_y)
-            if self._mouth_open:
-                self._draw_open_mouth(screen_x + 20, screen_y + 20)
-            else:
-                self._draw_small_smile(screen_x + 22, screen_y + 22)
-        elif expression == Expression.RECORDING:
-            # Recording: red dot and alert eyes
-            self._draw_recording_indicator(screen_x + screen_w - 12, screen_y + 4)
-            self._draw_eye_open(screen_x + 15, eye_y)
-            self._draw_eye_open(screen_x + 37, eye_y)
-            self._draw_flat_mouth(screen_x + 22, screen_y + 22)
-        elif expression == Expression.LISTENING:
-            # Listening: attentive eyes
-            self._draw_eye_attentive(screen_x + 15, eye_y)
-            self._draw_eye_attentive(screen_x + 37, eye_y)
-            self._draw_small_smile(screen_x + 22, screen_y + 22)
-        elif expression == Expression.THINKING:
-            # Thinking: looking to side with dots
-            self._draw_eye_right(screen_x + 16, eye_y)
-            self._draw_eye_right(screen_x + 38, eye_y)
-            self._draw_thinking_dots(screen_x + 50, screen_y + 10)
-            self._draw_small_smile(screen_x + 22, screen_y + 22)
-        else:
-            # Neutral/Happy: normal eyes and smile
-            self._draw_eye_open(screen_x + 15, eye_y)
-            self._draw_eye_open(screen_x + 37, eye_y)
-            self._draw_smile(screen_x + 20, screen_y + 22)
-
-        # Draw "Buddy" label at bottom
-        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "Buddy")
-
+        self._draw_eyes(expr, blink=blink)
+        self._draw_mouth(expr, override=mouth_override)
+        if think_dots:
+            for d in range(think_dots):
+                self._fill_ellipse(MOUTH_X + 22 + d * 8, 41, 2, 2)
         self.display.show()
 
-    def _draw_rounded_rect(self, x: int, y: int, w: int, h: int, r: int, fill: bool = False):
-        """Draw rounded rectangle."""
-        if fill:
-            for dy in range(h):
-                for dx in range(w):
-                    # Check if point is inside rounded rect
-                    if dx < r:
-                        if dy < r:
-                            if (dx - r) ** 2 + (dy - r) ** 2 > r ** 2:
-                                continue
-                        elif dy >= h - r:
-                            if (dx - r) ** 2 + (dy - (h - r - 1)) ** 2 > r ** 2:
-                                continue
-                    elif dx >= w - r:
-                        if dy < r:
-                            if (dx - (w - r - 1)) ** 2 + (dy - r) ** 2 > r ** 2:
-                                continue
-                        elif dy >= h - r:
-                            if (dx - (w - r - 1)) ** 2 + (dy - (h - r - 1)) ** 2 > r ** 2:
-                                continue
-                    self.display.set_pixel(x + dx, y + dy)
-        else:
-            # Draw just the outline
-            # Top and bottom arcs
-            for i in range(r):
-                self.display.set_pixel(x + r - i, y + i)
-                self.display.set_pixel(x + w - r + i, y + i)
-                self.display.set_pixel(x + r - i, y + h - 1 - i)
-                self.display.set_pixel(x + w - r + i, y + h - 1 - i)
-            # Top and bottom lines
-            for dx in range(r, w - r):
-                self.display.set_pixel(x + dx, y)
-                self.display.set_pixel(x + dx, y + h - 1)
-            # Left and right lines
-            for dy in range(r, h - r):
-                self.display.set_pixel(x, y + dy)
-                self.display.set_pixel(x + w - 1, y + dy)
+    # ── eye drawing ──────────────────────────────────────────────
 
-    def _draw_eye_open(self, x: int, y: int):
-        """Draw normal open eye."""
-        # Outer eye shape
-        self._draw_ellipse(x, y, 8, 6)
-        # Pupil
-        self._draw_fill(x + 2, y + 1, 4, 4)
+    def _draw_eyes(self, expr: Expression, blink: bool = False):
+        for idx, (cx, cy) in enumerate((L_EYE, R_EYE)):
+            if blink:
+                self._eye_blink(cx, cy)
+            elif expr == Expression.HAPPY:
+                self._eye_happy(cx, cy)
+            elif expr == Expression.SAD:
+                self._eye_sad(cx, cy)
+            elif expr == Expression.EXCITED:
+                self._eye_big(cx, cy)
+            elif expr == Expression.SLEEPING:
+                self._eye_sleeping(cx, cy)
+            elif expr == Expression.CONFUSED:
+                if idx == 0:
+                    self._eye_normal(cx, cy)
+                    self._draw_brow(cx, cy, tilt=True)
+                else:
+                    self._eye_squint(cx, cy)
+                    self._draw_brow(cx, cy, raised=True)
+            elif expr == Expression.THINKING:
+                self._eye_look_side(cx, cy, shift=+4)
+            elif expr == Expression.RECORDING:
+                self._eye_wide(cx, cy)
+            else:
+                # NEUTRAL, LISTENING, SPEAKING
+                self._eye_normal(cx, cy)
 
-    def _draw_eye_big(self, x: int, y: int):
-        """Draw big excited eye."""
-        self._draw_ellipse(x, y, 10, 8)
-        self._draw_fill(x + 3, y + 2, 5, 5)
+    def _fill_ellipse(self, cx: int, cy: int, rx: int, ry: int, color: int = 1):
+        for dy in range(-ry, ry + 1):
+            y = cy + dy
+            if not (0 <= y < H):
+                continue
+            w = int(rx * math.sqrt(max(0.0, 1.0 - (dy / ry) ** 2)))
+            for dx in range(-w, w + 1):
+                x = cx + dx
+                if 0 <= x < W:
+                    self.display.set_pixel(x, y, color)
 
-    def _draw_eye_attentive(self, x: int, y: int):
-        """Draw attentive listening eye."""
-        self._draw_ellipse(x, y, 7, 5)
-        self._draw_fill(x + 2, y + 1, 3, 3)
+    def _eye_normal(self, cx: int, cy: int):
+        """Filled oval eye with dark pupil and shine dot."""
+        self._fill_ellipse(cx, cy, EYE_RX, EYE_RY)
+        self._fill_ellipse(cx, cy, PUPIL_R, PUPIL_R, 0)
+        self.display.set_pixel(cx - 3, cy - 5)  # shine
 
-    def _draw_eye_right(self, x: int, y: int):
-        """Draw eye looking to the right."""
-        self._draw_ellipse(x, y, 7, 5)
-        self._draw_fill(x + 3, y + 1, 3, 3)
+    def _eye_big(self, cx: int, cy: int):
+        """Larger eye for excitement."""
+        self._fill_ellipse(cx, cy, EYE_RX + 2, EYE_RY + 2)
+        self._fill_ellipse(cx, cy, PUPIL_R + 1, PUPIL_R + 1, 0)
+        self.display.set_pixel(cx - 3, cy - 6)
 
-    def _draw_eye_line(self, x: int, y: int, length: int):
-        """Draw closed eye (horizontal line)."""
-        for i in range(length):
-            self.display.set_pixel(x + i, y)
+    def _eye_wide(self, cx: int, cy: int):
+        """Wide alert eye (recording)."""
+        self._fill_ellipse(cx, cy, EYE_RX, EYE_RY + 3)
+        self._fill_ellipse(cx, cy - 1, PUPIL_R - 1, PUPIL_R - 1, 0)
+        self.display.set_pixel(cx - 3, cy - 6)
 
-    def _draw_ellipse(self, cx: int, cy: int, rx: int, ry: int):
-        """Draw ellipse outline."""
-        # Simple midpoint ellipse algorithm
-        for angle in range(360):
-            import math
-            rad = math.radians(angle)
-            x = int(cx + rx * math.cos(rad))
-            y = int(cy + ry * math.sin(rad))
-            self.display.set_pixel(x, y)
+    def _eye_happy(self, cx: int, cy: int):
+        """Upper-half filled arch  ∩  — happy squint."""
+        for dy in range(-EYE_RY, 1):
+            y = cy + dy
+            if not (0 <= y < H):
+                continue
+            w = int(EYE_RX * math.sqrt(max(0.0, 1.0 - (dy / EYE_RY) ** 2)))
+            for dx in range(-w, w + 1):
+                x = cx + dx
+                if 0 <= x < W:
+                    self.display.set_pixel(x, y)
 
-    def _draw_fill(self, x: int, y: int, w: int, h: int):
-        """Draw filled rectangle."""
-        for dy in range(h):
-            for dx in range(w):
-                self.display.set_pixel(x + dx, y + dy)
+    def _eye_sad(self, cx: int, cy: int):
+        """Normal eye with inner sad brow tilted downward."""
+        self._fill_ellipse(cx, cy + 2, EYE_RX - 1, EYE_RY - 2)
+        self._fill_ellipse(cx, cy + 2, PUPIL_R - 1, PUPIL_R - 1, 0)
+        self._draw_line(cx - 5, cy - 9, cx + 3, cy - 6)  # drooping brow
+
+    def _eye_look_side(self, cx: int, cy: int, shift: int = 0):
+        """Eye with pupil offset to one side."""
+        self._fill_ellipse(cx, cy, EYE_RX, EYE_RY)
+        self._fill_ellipse(cx + shift, cy, PUPIL_R, PUPIL_R, 0)
+        self.display.set_pixel(cx + shift - 2, cy - 4)
+
+    def _eye_blink(self, cx: int, cy: int):
+        """Closed eye — three horizontal lines."""
+        for dy in range(-1, 2):
+            self._draw_line(cx - EYE_RX + 2, cy + dy, cx + EYE_RX - 2, cy + dy)
+
+    def _eye_sleeping(self, cx: int, cy: int):
+        """Sleeping closed arc — U-shaped eyelid."""
+        for dx in range(-EYE_RX, EYE_RX + 1):
+            t = dx / EYE_RX
+            y_off = int((EYE_RY // 2) * t * t)
+            y = cy + y_off
+            if 0 <= y < H:
+                self.display.set_pixel(cx + dx, y)
+                self.display.set_pixel(cx + dx, y + 1)
+
+    def _eye_squint(self, cx: int, cy: int):
+        """Half-closed squint for confused expression."""
+        self._fill_ellipse(cx, cy + 3, EYE_RX - 2, EYE_RY // 2)
+        self._fill_ellipse(cx, cy + 3, PUPIL_R - 2, PUPIL_R - 2, 0)
+
+    def _draw_brow(self, cx: int, cy: int, tilt: bool = False, raised: bool = False):
+        by = cy - EYE_RY - 3
+        if tilt:
+            self._draw_line(cx - 7, by, cx + 3, by + 4)
+        elif raised:
+            self._draw_line(cx - 5, by - 4, cx + 5, by - 3)
+
+    # ── mouth drawing ────────────────────────────────────────────
+
+    _MOUTH_MAP = {
+        Expression.HAPPY:     "big_smile",
+        Expression.SAD:       "frown",
+        Expression.EXCITED:   "open_happy",
+        Expression.CONFUSED:  "wavy",
+        Expression.THINKING:  "small_smile",
+        Expression.RECORDING: "flat",
+        Expression.LISTENING: "oval",
+        Expression.SLEEPING:  "tiny",
+        Expression.SPEAKING:  "small_smile",
+        Expression.NEUTRAL:   "smile",
+    }
+
+    def _draw_mouth(self, expr: Expression, override: str = None):
+        kind = override or self._MOUTH_MAP.get(expr, "smile")
+        cx, y = MOUTH_X, MOUTH_Y
+        if   kind == "smile":       self._m_smile(cx, y, w=12, h=6, thick=2)
+        elif kind == "big_smile":   self._m_smile(cx, y, w=16, h=8, thick=2)
+        elif kind == "small_smile": self._m_smile(cx, y, w=8,  h=3, thick=1)
+        elif kind == "frown":       self._m_frown(cx, y)
+        elif kind == "open_happy":  self._m_open_happy(cx, y)
+        elif kind == "open":        self._m_open(cx, y)
+        elif kind == "wavy":        self._m_wavy(cx, y)
+        elif kind == "flat":
+            self._draw_line(cx - 8, y, cx + 8, y)
+            self._draw_line(cx - 8, y + 1, cx + 8, y + 1)
+        elif kind == "oval":
+            self._fill_ellipse(cx, y + 4, 7, 5)
+            self._fill_ellipse(cx, y + 4, 4, 3, 0)
+        elif kind == "tiny":
+            self._draw_line(cx - 4, y, cx + 4, y)
+
+    def _m_smile(self, cx: int, y: int, w: int = 12, h: int = 6, thick: int = 2):
+        for i in range(-w, w + 1):
+            py = y + int(h * (i / w) ** 2)
+            for t in range(thick):
+                self.display.set_pixel(cx + i, py + t)
+
+    def _m_frown(self, cx: int, y: int):
+        for i in range(-12, 13):
+            py = y + 6 - int(6 * (i / 12) ** 2)
+            self.display.set_pixel(cx + i, py)
+            self.display.set_pixel(cx + i, py + 1)
+
+    def _m_open_happy(self, cx: int, y: int):
+        """Big open mouth: outer lip fill, dark opening, teeth stripe, tongue."""
+        # 1. Outer lips (green filled ellipse)
+        self._fill_ellipse(cx, y + 8, 15, 9)
+        # 2. Inner mouth opening (black)
+        self._fill_ellipse(cx, y + 9, 11, 6, 0)
+        # 3. Teeth stripe — redraw green on top of inner black
+        for dx in range(-9, 10):
+            for dy in range(3):
+                self.display.set_pixel(cx + dx, y + 3 + dy)
+        # 4. Tongue — green bump at bottom of opening
+        self._fill_ellipse(cx, y + 14, 7, 3)
+
+    def _m_open(self, cx: int, y: int):
+        """Simple open O mouth for speaking."""
+        self._fill_ellipse(cx, y + 5, 9, 6)
+        self._fill_ellipse(cx, y + 5, 6, 3, 0)
+
+    def _m_wavy(self, cx: int, y: int):
+        for i in range(-10, 11):
+            py = y + int(2 * math.sin(i * math.pi / 5))
+            self.display.set_pixel(cx + i, py)
+            self.display.set_pixel(cx + i, py + 1)
+
+    # ── utility drawing ──────────────────────────────────────────
 
     def _draw_line(self, x1: int, y1: int, x2: int, y2: int):
-        """Draw line using Bresenham's algorithm."""
-        dx = abs(x2 - x1)
-        dy = abs(y2 - y1)
+        dx, dy = abs(x2 - x1), abs(y2 - y1)
         sx = 1 if x1 < x2 else -1
         sy = 1 if y1 < y2 else -1
         err = dx - dy
-
         while True:
             self.display.set_pixel(x1, y1)
             if x1 == x2 and y1 == y2:
@@ -238,175 +298,47 @@ class ExpressionEngine:
                 err += dx
                 y1 += sy
 
-    def _draw_smile(self, x: int, y: int):
-        """Draw simple smile."""
-        # Arc for smile
-        for i in range(16):
-            import math
-            angle = math.pi * i / 16
-            px = int(x + i)
-            py = int(y + 4 * math.sin(angle))
-            self.display.set_pixel(px, py)
+    # ── animation loops ──────────────────────────────────────────
 
-    def _draw_big_smile(self, x: int, y: int):
-        """Draw big excited smile."""
-        for i in range(20):
-            import math
-            angle = math.pi * i / 20
-            px = int(x + i)
-            py = int(y + 6 * math.sin(angle))
-            self.display.set_pixel(px, py)
+    def _loop_blink(self, expr: Expression):
+        """Randomly blink every 3-6 seconds to feel alive."""
+        while not self._stop.wait(random.uniform(3.0, 6.0)):
+            self._draw_frame(expr, blink=True)
+            if self._stop.wait(0.12):
+                break
+            self._draw_frame(expr)
 
-    def _draw_small_smile(self, x: int, y: int):
-        """Draw small subtle smile."""
-        for i in range(10):
-            import math
-            angle = math.pi * i / 10
-            px = int(x + i)
-            py = int(y + 2 * math.sin(angle))
-            self.display.set_pixel(px, py)
+    def _loop_sleeping(self):
+        """Animate floating Z's while sleeping."""
+        z_offset = 0.0
+        while not self._stop.is_set():
+            self.display.clear()
+            self._draw_eyes(Expression.SLEEPING)
+            self._draw_mouth(Expression.SLEEPING)
+            for i, ch in enumerate(("Z", "z", "z")):
+                zx = 80 + i * 12
+                zy = int(12 - z_offset + i * 7)
+                if 2 <= zy < H - 8:
+                    self.display.draw_text(zx, zy, ch)
+            self.display.show()
+            z_offset = (z_offset + 1.5) % 20
+            if self._stop.wait(0.8):
+                break
 
-    def _draw_sad_mouth(self, x: int, y: int):
-        """Draw sad frown."""
-        for i in range(12):
-            import math
-            angle = math.pi + math.pi * i / 12
-            px = int(x + i)
-            py = int(y + 3 * math.sin(angle))
-            self.display.set_pixel(px, py)
+    def _loop_speaking(self):
+        """Cycle mouth shapes to animate speaking."""
+        phases = ("small_smile", "open", "open", "small_smile", "open", "small_smile")
+        i = 0
+        while not self._stop.wait(0.13):
+            self.display.clear()
+            self._draw_eyes(Expression.SPEAKING)
+            self._draw_mouth(Expression.SPEAKING, override=phases[i % len(phases)])
+            self.display.show()
+            i += 1
 
-    def _draw_flat_mouth(self, x: int, y: int):
-        """Draw flat line mouth."""
-        for i in range(12):
-            self.display.set_pixel(x + i, y)
-
-    def _draw_open_mouth(self, x: int, y: int):
-        """Draw open mouth for speaking."""
-        self._draw_rounded_rect(x, y, 12, 8, 2, fill=True)
-
-    def _draw_recording_indicator(self, x: int, y: int):
-        """Draw red recording dot."""
-        # Draw red circle
-        for dy in range(-4, 5):
-            for dx in range(-4, 5):
-                if dx * dx + dy * dy <= 16:
-                    self.display.set_pixel(x + dx, y + dy)
-
-    def _draw_thinking_dots(self, x: int, y: int):
-        """Draw thinking animation dots..."""
-        for i in range(3):
-            self.display.set_pixel(x + i * 6, y)
-            self.display.set_pixel(x + i * 6, y + 1)
-
-    def _start_idle_animation(self, expression: Expression):
-        """Start idle animation loop."""
-        if self._animation_thread and self._animation_thread.is_alive():
-            self._stop_animation.set()
-            self._animation_thread.join(timeout=0.5)
-
-        self._stop_animation = threading.Event()
-        self._animation_thread = threading.Thread(
-            target=self._idle_animation_loop,
-            args=(expression,),
-            daemon=True
-        )
-        self._animation_thread.start()
-
-    def _idle_animation_loop(self, expression: Expression):
-        """Run idle animation (sleeping Z's, thinking dots, etc.)."""
-        if expression == Expression.SLEEPING:
-            z_offset = 0
-            while not self._stop_animation.is_set():
-                self.display.clear()
-                # Redraw face sleeping
-                self._render_static_sleeping()
-                # Animate Z's
-                self._draw_zzz(70, 15 + z_offset)
-                self.display.show()
-                time.sleep(1)
-                z_offset = (z_offset + 3) % 10
-
-        elif expression == Expression.THINKING:
-            dot_phase = 0
-            while not self._stop_animation.is_set():
-                self.display.clear()
-                self._render_static_thinking(dot_phase)
-                self.display.show()
-                time.sleep(0.5)
-                dot_phase = (dot_phase + 1) % 3
-
-    def _render_static_sleeping(self):
-        """Render base sleeping face."""
-        body_x, body_y = 20, 8
-        body_w, body_h = 88, 48
-        self._draw_rounded_rect(body_x, body_y, body_w, body_h, 8)
-        screen_x, screen_y = body_x + 6, body_y + 6
-        screen_w, screen_h = body_w - 12, body_h - 20
-        self._draw_rounded_rect(screen_x, screen_y, screen_w, screen_h, 4, fill=True)
-        # Closed eyes
-        self._draw_eye_line(screen_x + 18, screen_y + 14, 10)
-        self._draw_eye_line(screen_x + 40, screen_y + 14, 10)
-        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "Buddy")
-
-    def _render_static_thinking(self, dot_phase: int):
-        """Render thinking face with animated dots."""
-        body_x, body_y = 20, 8
-        body_w, body_h = 88, 48
-        self._draw_rounded_rect(body_x, body_y, body_w, body_h, 8)
-        screen_x, screen_y = body_x + 6, body_y + 6
-        screen_w, screen_h = body_w - 12, body_h - 20
-        self._draw_rounded_rect(screen_x, screen_y, screen_w, screen_h, 4, fill=True)
-        # Eyes looking right
-        self._draw_eye_right(screen_x + 16, screen_y + 8)
-        self._draw_eye_right(screen_x + 38, screen_y + 8)
-        # Thinking dots
-        for i in range(3):
-            if i <= dot_phase:
-                self.display.set_pixel(screen_x + 50 + i * 6, screen_y + 10)
-                self.display.set_pixel(screen_x + 50 + i * 6, screen_y + 11)
-        # Small smile
-        self._draw_small_smile(screen_x + 22, screen_y + 22)
-        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "Buddy")
-
-    def _draw_zzz(self, x: int, y: int):
-        """Draw sleeping Z's."""
-        z_chars = ["Z", "z", "z"]
-        for i, char in enumerate(z_chars):
-            offset_y = y - i * 8
-            if offset_y > 10:
-                self.display.draw_text(x + i * 10, offset_y, char)
-
-    def animate_speaking(self, duration: float = 0.1):
-        """Animate mouth for speaking.
-
-        Args:
-            duration: Duration of each mouth state in seconds
-        """
-        self._mouth_open = True
-        self._render_expression(Expression.SPEAKING)
-        time.sleep(duration)
-        self._mouth_open = False
-        self._render_expression(Expression.SPEAKING)
-
-    def test_all(self):
-        """Run through all expressions for testing."""
-        expressions = [
-            Expression.HAPPY,
-            Expression.SAD,
-            Expression.CONFUSED,
-            Expression.EXCITED,
-            Expression.NEUTRAL,
-            Expression.LISTENING,
-            Expression.SPEAKING,
-            Expression.THINKING,
-            Expression.SLEEPING,
-            Expression.RECORDING,
-        ]
-
-        for expr in expressions:
-            logger.info(f"Testing expression: {expr.value}")
-            self.show_expression(expr.value)
-            time.sleep(1.5)
-
-        self.show_expression("neutral")
-        logger.info("Expression test complete")
+    def _loop_thinking(self):
+        """Animate ellipsis dots while thinking."""
+        dot = 0
+        while not self._stop.wait(0.45):
+            self._draw_frame(Expression.THINKING, think_dots=dot + 1)
+            dot = (dot + 1) % 3
