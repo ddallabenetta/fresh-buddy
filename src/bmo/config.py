@@ -19,26 +19,25 @@ class Config:
     display_address: int = 0x3C
     audio_device: int = 0
 
-    # Model paths
-    nemotron_model_path: Optional[str] = None
+    # Model paths (for local STT/TTS)
     parakeet_model_path: Optional[str] = None
     piper_model_path: Optional[str] = None
 
     # LLM API settings (OpenAI-compatible endpoint)
     llm_api_endpoint: Optional[str] = "http://llm-server:8080/v1"
     llm_api_key: Optional[str] = "not-needed"
-    llm_model_name: Optional[str] = "nemotron"
+    llm_model_name: Optional[str] = "model"
+
+    # LLM generation settings
+    llm_temperature: float = 0.7
+    llm_max_tokens: int = 512
+    llm_top_p: float = 0.9
 
     # Piper TTS settings
     piper_voice: str = "it_IT-riccardo-medium"
     piper_speaker: Optional[int] = None
     piper_noise_scale: float = 0.667
     piper_length_scale: float = 1.0
-
-    # Nemotron LLM settings
-    nemotron_temperature: float = 0.7
-    nemotron_max_tokens: int = 512
-    nemotron_top_p: float = 0.9
 
     # Meeting settings
     meeting_storage_dir: str = "meetings"
@@ -82,12 +81,14 @@ class Config:
 
         # Override with environment variables
         env_mappings = {
-            "NEMOTRON_MODEL_PATH": "nemotron_model_path",
             "PARAKEET_MODEL_PATH": "parakeet_model_path",
             "PIPER_MODEL_PATH": "piper_model_path",
             "PIPER_VOICE": "piper_voice",
-            "NEMOTRON_TEMPERATURE": "nemotron_temperature",
-            "NEMOTRON_MAX_TOKENS": "nemotron_max_tokens",
+            "LLM_API_ENDPOINT": "llm_api_endpoint",
+            "LLM_API_KEY": "llm_api_key",
+            "LLM_MODEL_NAME": "llm_model_name",
+            "LLM_TEMPERATURE": "llm_temperature",
+            "LLM_MAX_TOKENS": "llm_max_tokens",
             "DEBUG_MODE": "debug_mode",
         }
 
@@ -148,22 +149,21 @@ DEFAULT_CONFIG_JSON = """
     "display_address": 60,
     "audio_device": 0,
 
-    "nemotron_model_path": null,
     "parakeet_model_path": null,
     "piper_model_path": null,
 
     "llm_api_endpoint": "http://llm-server:8080/v1",
     "llm_api_key": "not-needed",
-    "llm_model_name": "nemotron",
+    "llm_model_name": "model",
 
     "piper_voice": "it_IT-riccardo-medium",
     "piper_speaker": null,
     "piper_noise_scale": 0.667,
     "piper_length_scale": 1.0,
 
-    "nemotron_temperature": 0.7,
-    "nemotron_max_tokens": 512,
-    "nemotron_top_p": 0.9,
+    "llm_temperature": 0.7,
+    "llm_max_tokens": 512,
+    "llm_top_p": 0.9,
 
     "meeting_storage_dir": "meetings",
     "meeting_summary_length": 300,

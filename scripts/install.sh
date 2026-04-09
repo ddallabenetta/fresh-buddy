@@ -114,8 +114,8 @@ else
     echo "  piper-download en_US-lessac-medium voices/"
 fi
 
-# Note about Nemotron
-echo -e "${YELLOW}Note about Nemotron model:${NC}"
+# Note about LLM model
+echo -e "${YELLOW}Note about LLM model model:${NC}"
 echo "Due to model size, please download manually:"
 echo "  1. Visit: https://huggingface.co/NousResearch/Meta-Llama-3-8B-Instruct"
 echo "  2. Download the GGUF quantized version"
@@ -130,14 +130,14 @@ if [ ! -f "config.json" ]; then
     "i2c_bus": 1,
     "display_address": 60,
     "audio_device": 0,
-    "nemotron_model_path": "models/ggml-model.gguf",
+    "llm_model_path": "models/ggml-model.gguf",
     "parakeet_model_path": null,
     "piper_model_path": "voices/en_US-lessac-medium.onnx",
     "piper_voice": "en_US-lessac-medium",
     "piper_noise_scale": 0.667,
     "piper_length_scale": 1.0,
-    "nemotron_temperature": 0.7,
-    "nemotron_max_tokens": 512,
+    "llm_temperature": 0.7,
+    "llm_max_tokens": 512,
     "meeting_storage_dir": "meetings",
     "wake_word": "hey bmo",
     "debug_mode": false,
@@ -156,7 +156,7 @@ echo "✅ Installation complete!"
 echo "==============================${NC}"
 echo ""
 echo "Next steps:"
-echo "  1. Download Nemotron model to models/"
+echo "  1. Download LLM model model to models/"
 echo "  2. Activate venv: source venv/bin/activate"
 echo "  3. Test display: python -m bmo.main --test-face"
 echo "  4. Test audio: python -m bmo.main --test-audio"

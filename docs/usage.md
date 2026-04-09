@@ -117,8 +117,8 @@ Modifica `config.json` per personalizzare:
 ### Impostazioni LLM
 ```json
 {
-    "nemotron_temperature": 0.7,
-    "nemotron_max_tokens": 512
+    "llm_temperature": 0.7,
+    "llm_max_tokens": 512
 }
 ```
 
@@ -140,7 +140,7 @@ Modifica `config.json` per personalizzare:
 ### Le risposte sono lente
 - Il modello Nemotron potrebbe necessitare quantizzazione
 - Controlla thermal throttling del Jetson
-- Riduci `nemotron_max_tokens`
+- Riduci `llm_max_tokens`
 
 ### Qualità audio scarsa
 - Usa un microfono di qualità superiore

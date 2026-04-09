@@ -29,7 +29,7 @@ RUN git clone https://github.com/ggerganov/llama.cpp.git /llama.cpp \
 RUN mkdir -p /models
 
 # Environment
-ENV MODEL_NAME=nemotron
+ENV MODEL_NAME=model
 ENV CONTEXT_SIZE=4096
 ENV N_GPU_LAYERS=32
 ENV PORT=8080

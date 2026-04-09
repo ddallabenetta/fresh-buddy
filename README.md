@@ -105,7 +105,7 @@ Fresh Buddy's face changes based on:
 
 | Component | Model | Notes |
 |-----------|-------|-------|
-| LLM | Nemotron 3 4B | Quantized for Jetson |
+| LLM | Any OpenAI-compatible model (e.g. Llama, Nemotron, Qwen) | Quantized for Jetson |
 | STT | Parakeet | Distilled variant |
 | TTS | Piper | Medium quality voice |
 

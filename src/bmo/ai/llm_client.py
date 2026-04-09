@@ -1,4 +1,4 @@
-"""Nemotron LLM Integration via OpenAI-Compatible API"""
+"""LLM Client — OpenAI-Compatible API Integration"""
 
 import logging
 import json
@@ -15,7 +15,7 @@ except ImportError:
     import requests
 
 
-class NemotronLLM:
+class LLMClient:
     """Interface to LLM via OpenAI-compatible API endpoint."""
 
     def __init__(self, config=None):
@@ -28,12 +28,12 @@ class NemotronLLM:
         self.config = config
         self.endpoint = getattr(self.config, 'llm_api_endpoint', None) or "http://localhost:8080/v1"
         self.api_key = getattr(self.config, 'llm_api_key', None) or "not-needed"
-        self.model_name = getattr(self.config, 'llm_model_name', None) or "nemotron"
+        self.model_name = getattr(self.config, 'llm_model_name', None) or "model"
 
         # Generation settings
-        self.temperature = getattr(self.config, 'nemotron_temperature', 0.7)
-        self.max_tokens = getattr(self.config, 'nemotron_max_tokens', 512)
-        self.top_p = getattr(self.config, 'nemotron_top_p', 0.9)
+        self.temperature = getattr(self.config, 'llm_temperature', 0.7)
+        self.max_tokens = getattr(self.config, 'llm_max_tokens', 512)
+        self.top_p = getattr(self.config, 'llm_top_p', 0.9)
 
         self._client = None
         self._initialized = False

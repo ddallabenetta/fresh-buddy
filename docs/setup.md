@@ -64,7 +64,7 @@ pip install piper-download
 #### Nemotron 3 4B (LLM)
 
 ```bash
-huggingface-cli download --local-dir models/nemotron-3-4b \
+huggingface-cli download --local-dir models \
    NousResearch/Meta-Llama-3-8B-Instruct
 ```
 
@@ -88,7 +88,7 @@ Crea `config.json` nella root del progetto:
 
 ```json
 {
-    "nemotron_model_path": "models/nemotron-3-4b/ggml-model.gguf",
+    "llm_model_path": "models/ggml-model.gguf",
     "parakeet_model_path": "models/parakeet/model",
     "piper_model_path": "voices/it_IT-riccardo-medium.onnx",
     "i2c_bus": 1,

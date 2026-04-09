@@ -14,7 +14,7 @@ services:
       # Mount your GGUF model file here
       - ${MODEL_PATH:-./models}:/models:ro
     environment:
-      - MODEL_NAME=${MODEL_NAME:-nemotron}
+      - MODEL_NAME=${MODEL_NAME:-model}
       - CONTEXT_SIZE=${CONTEXT_SIZE:-4096}
       - N_GPU_LAYERS=${N_GPU_LAYERS:-32}
     # GPU access (remove if running on CPU only)
@@ -51,7 +51,7 @@ services:
     environment:
       - LLM_API_ENDPOINT=http://llm-server:8080/v1
       - LLM_API_KEY=${LLM_API_KEY:-not-needed}
-      - LLM_MODEL_NAME=${MODEL_NAME:-nemotron}
+      - LLM_MODEL_NAME=${MODEL_NAME:-model}
       - PIPER_VOICE=${PIPER_VOICE:-it_IT-riccardo-medium}
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

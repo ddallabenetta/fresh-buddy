@@ -171,7 +171,7 @@ bmocompano/
 │   │   ├── stt.py        # Parakeet STT
 │   │   └── tts.py        # Piper TTS
 │   └── ai/
-│       ├── nemotron.py   # LLM interface
+│       ├── llm_client.py   # LLM interface
 │       └── meeting.py    # Meeting assistant
 ├── tests/
 │   ├── test_face.py

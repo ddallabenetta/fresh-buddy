@@ -81,7 +81,7 @@ docker compose logs -f
 ```bash
 # Server LLM
 LLM_PORT=8080
-MODEL_NAME=nemotron
+MODEL_NAME=model
 MODEL_PATH=./models
 CONTEXT_SIZE=4096
 N_GPU_LAYERS=32
@@ -104,7 +104,7 @@ LOG_LEVEL=INFO
 {
     "llm_api_endpoint": "http://llm-server:8080/v1",
     "llm_api_key": "not-needed",
-    "llm_model_name": "nemotron",
+    "llm_model_name": "model",
     "piper_voice": "it_IT-riccardo-medium",
     "wake_word": "ciao buddy"
 }
@@ -164,7 +164,7 @@ docker compose logs llm-server
 # Test manuale
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"nemotron","messages":[{"role":"user","content":"Ciao"}]}'
+  -d '{"model":"model","messages":[{"role":"user","content":"Ciao"}]}'
 ```
 
 ### Fresh Buddy non si connette

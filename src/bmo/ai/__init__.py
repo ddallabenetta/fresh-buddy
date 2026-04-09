@@ -1,5 +1,5 @@
 # AI module
-from bmo.ai.nemotron import NemotronLLM
+from bmo.ai.llm_client import LLMClient
 from bmo.ai.meeting import MeetingAssistant
 
-__all__ = ["NemotronLLM", "MeetingAssistant"]
+__all__ = ["LLMClient", "MeetingAssistant"]

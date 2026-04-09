@@ -1,4 +1,4 @@
-"""Tests for AI Modules (Nemotron and Meeting Assistant)"""
+"""Tests for AI Modules (LLM Client and Meeting Assistant)"""
 
 import unittest
 from unittest.mock import Mock, MagicMock, patch
@@ -8,16 +8,16 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from bmo.ai.nemotron import NemotronLLM
+from bmo.ai.llm_client import LLMClient
 from bmo.ai.meeting import MeetingAssistant
 
 
-class TestNemotronLLM(unittest.TestCase):
-    """Test cases for Nemotron LLM module."""
+class TestLLMClient(unittest.TestCase):
+    """Test cases for LLM Client module."""
 
     def setUp(self):
         """Set up test fixtures."""
-        self.llm = NemotronLLM()
+        self.llm = LLMClient()
 
     def test_llm_initialization(self):
         """Test LLM initializes without error."""
@@ -154,9 +154,9 @@ class TestMeetingAssistant(unittest.TestCase):
 class TestAIIntegration(unittest.TestCase):
     """Integration tests for AI pipeline."""
 
-    def test_nemotron_and_meeting_creation(self):
+    def test_llm_client_and_meeting_creation(self):
         """Test both modules can be created together."""
-        llm = NemotronLLM()
+        llm = LLMClient()
         stt = ParakeetSTT()
         tts = PiperTTS()
         meeting = MeetingAssistant(llm, stt, tts)

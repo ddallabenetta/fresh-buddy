@@ -11,7 +11,7 @@ from bmo.face.display import OLEDDisplay
 from bmo.face.expressions import ExpressionEngine
 from bmo.audio.stt import ParakeetSTT
 from bmo.audio.tts import PiperTTS
-from bmo.ai.nemotron import NemotronLLM
+from bmo.ai.llm_client import LLMClient
 from bmo.ai.meeting import MeetingAssistant
 
 logging.basicConfig(
@@ -34,7 +34,7 @@ class FreshBuddy:
         self.expressions = ExpressionEngine(self.display)
         self.stt = ParakeetSTT(self.config)
         self.tts = PiperTTS(self.config)
-        self.llm = NemotronLLM(self.config)
+        self.llm = LLMClient(self.config)
         self.meeting = MeetingAssistant(self.llm, self.stt, self.tts)
 
         # Setup signal handlers

@@ -17,7 +17,7 @@ class MeetingAssistant:
         Initialize Meeting Assistant.
 
         Args:
-            llm: NemotronLLM instance
+            llm: LLMClient instance
             stt: ParakeetSTT instance
             tts: PiperTTS instance
         """
