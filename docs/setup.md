@@ -79,7 +79,7 @@ coqui-stt-model-manager download parakeet
 #### Piper TTS Voice (Italiano)
 
 ```bash
-piper-download it_IT-riccardo-medium
+piper-download it_IT-riccardo-x_low
 ```
 
 ### 5. Configurazione
@@ -90,7 +90,7 @@ Crea `config.json` nella root del progetto:
 {
     "llm_model_path": "models/ggml-model.gguf",
     "parakeet_model_path": "models/parakeet/model",
-    "piper_model_path": "voices/it_IT-riccardo-medium.onnx",
+    "piper_model_path": "voices/it_IT-riccardo-x_low.onnx",
     "i2c_bus": 1,
     "debug_mode": false
 }

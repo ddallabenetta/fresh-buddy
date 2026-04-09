@@ -23,6 +23,10 @@ class Config:
     parakeet_model_path: Optional[str] = None
     piper_model_path: Optional[str] = None
 
+    # Audio microservice endpoints
+    stt_endpoint: str = "http://stt:5001"
+    tts_endpoint: str = "http://tts:5002"
+
     # LLM API settings (OpenAI-compatible endpoint)
     llm_api_endpoint: Optional[str] = "http://llm-server:8080/v1"
     llm_api_key: Optional[str] = "not-needed"
@@ -34,7 +38,7 @@ class Config:
     llm_top_p: float = 0.9
 
     # Piper TTS settings
-    piper_voice: str = "it_IT-riccardo-medium"
+    piper_voice: str = "it_IT-paola-medium"
     piper_speaker: Optional[int] = None
     piper_noise_scale: float = 0.667
     piper_length_scale: float = 1.0
@@ -81,6 +85,8 @@ class Config:
 
         # Override with environment variables
         env_mappings = {
+            "STT_ENDPOINT": "stt_endpoint",
+            "TTS_ENDPOINT": "tts_endpoint",
             "PARAKEET_MODEL_PATH": "parakeet_model_path",
             "PIPER_MODEL_PATH": "piper_model_path",
             "PIPER_VOICE": "piper_voice",
@@ -156,7 +162,7 @@ DEFAULT_CONFIG_JSON = """
     "llm_api_key": "not-needed",
     "llm_model_name": "model",
 
-    "piper_voice": "it_IT-riccardo-medium",
+    "piper_voice": "it_IT-paola-medium",
     "piper_speaker": null,
     "piper_noise_scale": 0.667,
     "piper_length_scale": 1.0,

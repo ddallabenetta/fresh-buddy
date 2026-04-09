@@ -108,7 +108,7 @@ Modifica `config.json` per personalizzare:
 ### Impostazioni Voce
 ```json
 {
-    "piper_voice": "it_IT-riccardo-medium",
+    "piper_voice": "it_IT-riccardo-x_low",
     "piper_speaker": null,
     "piper_length_scale": 1.0
 }

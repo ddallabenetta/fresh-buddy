@@ -69,6 +69,17 @@ class OLEDDisplay:
             self._initialized = False
             # Create virtual framebuffer for simulation
             self._framebuffer = bytearray(self.WIDTH * self.HEIGHT // 8)
+            self._start_preview_server()
+
+    def _start_preview_server(self):
+        """Start HTTP preview server when running in simulation mode."""
+        try:
+            import os
+            port = int(os.environ.get("PREVIEW_PORT", 5000))
+            from bmo.face.preview_server import start_preview_server
+            start_preview_server(self, port=port)
+        except Exception as e:
+            logger.debug(f"Preview server not started: {e}")
 
     def _send_command(self, cmd: int, *args: int):
         """Send a command to the display."""

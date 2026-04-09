@@ -1,0 +1,70 @@
+version: "3.8"
+
+# Development compose — no OLED, no GPU, no llama.cpp build.
+# Requires Ollama (or any OpenAI-compatible server) running on the host.
+#
+# Usage:
+#   docker-compose -f docker-compose.dev.yml up --build
+#
+# Services:
+#   stt   — faster-whisper HTTP API  (port 5001, internal)
+#   tts   — piper-tts HTTP API       (port 5002, internal)
+#   fresh-buddy — main app           (port 8088, exposed)
+
+services:
+  stt:
+    build:
+      context: services/stt
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-tiny}
+    image: fresh-buddy/stt:dev
+    container_name: fresh-buddy-stt
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
+      - STT_LANGUAGE=${STT_LANGUAGE:-it}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+    restart: "no"
+
+  tts:
+    build:
+      context: services/tts
+    image: fresh-buddy/tts:dev
+    container_name: fresh-buddy-tts
+    environment:
+      - PIPER_VOICE=${PIPER_VOICE:-it_IT-riccardo-x_low}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - piper-voices:/app/voices
+    restart: "no"
+
+  fresh-buddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    image: fresh-buddy/app:dev
+    container_name: fresh-buddy-dev
+    depends_on:
+      - stt
+      - tts
+    ports:
+      - "${APP_PORT:-8088}:8088"
+    volumes:
+      - ./meetings:/app/meetings
+    environment:
+      # On macOS, host.docker.internal resolves to the host machine
+      - LLM_API_ENDPOINT=${LLM_API_ENDPOINT:-http://host.docker.internal:11434/v1}
+      - LLM_API_KEY=${LLM_API_KEY:-not-needed}
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-llama3.2}
+      - STT_ENDPOINT=http://stt:5001
+      - TTS_ENDPOINT=http://tts:5002
+      - DEBUG_MODE=${DEBUG_MODE:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - PREVIEW_PORT=${PREVIEW_PORT:-8088}
+    # No /dev/snd mount — audio runs in simulation on macOS
+    restart: "no"
+
+volumes:
+  whisper-models:
+  piper-voices:

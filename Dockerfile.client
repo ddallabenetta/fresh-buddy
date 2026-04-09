@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     portaudio19-dev \
     libsndfile1-dev \
     libopenblas-dev \
+    gcc \
+    libc6-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -22,14 +24,17 @@ COPY tests/ ./tests/
 COPY pyproject.toml .
 COPY README.md .
 
-# Create non-root user
-RUN useradd -m -u 1000 buddy && mkdir -p /app/meetings && chown -R buddy:buddy /app
+# Create non-root user and required dirs
+RUN useradd -m -u 1000 buddy \
+    && mkdir -p /app/meetings /app/voices \
+    && chown -R buddy:buddy /app \
+    && chmod +x /app/scripts/entrypoint.sh
 
 USER buddy
 
 # Environment defaults
 ENV PYTHONUNBUFFERED=1
 ENV LOG_LEVEL=INFO
+ENV PYTHONPATH=/app/src
 
-# Default command - interactive mode
-CMD ["python", "-m", "bmo.main"]
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]

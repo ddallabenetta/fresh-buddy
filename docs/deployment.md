@@ -90,7 +90,7 @@ N_GPU_LAYERS=32
 LLM_API_KEY=not-needed
 
 # TTS
-PIPER_VOICE=it_IT-riccardo-medium
+PIPER_VOICE=it_IT-riccardo-x_low
 
 # App
 APP_PORT=5000
@@ -105,7 +105,7 @@ LOG_LEVEL=INFO
     "llm_api_endpoint": "http://llm-server:8080/v1",
     "llm_api_key": "not-needed",
     "llm_model_name": "model",
-    "piper_voice": "it_IT-riccardo-medium",
+    "piper_voice": "it_IT-riccardo-x_low",
     "wake_word": "ciao buddy"
 }
 ```
