@@ -1,6 +1,6 @@
 # BMOCompano 🤖
 
-**Local AI Companion on Jetson Orin Nano with Virtual BMO Face**
+**Fresh Buddy — Local AI Companion on Jetson Orin Nano**
 
 A private, fully-local AI assistant featuring a animated face inspired by Adventure Time's BMO, running on NVIDIA Jetson Orin Nano with Nemotron 3 4B, Parakeet STT, and Piper TTS.
 
