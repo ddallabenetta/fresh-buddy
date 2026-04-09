@@ -188,7 +188,7 @@ class ExpressionEngine:
     def _draw_eyes(self, expr: Expression):
         for idx, (cx, cy) in enumerate((L_EYE, R_EYE)):
             if   expr == Expression.HAPPY:     self._eye_happy(cx, cy)
-            elif expr == Expression.SAD:       self._eye_sad(cx, cy)
+            elif expr == Expression.SAD:       self._eye_sad(cx, cy, left=(idx == 0))
             elif expr == Expression.EXCITED:   self._eye_big(cx, cy)
             elif expr == Expression.SLEEPING:  self._eye_sleeping(cx, cy)
             elif expr == Expression.CONFUSED:
@@ -242,10 +242,14 @@ class ExpressionEngine:
             x0, x1 = max(0, cx - w), min(W, cx + w + 1)
             self._buf[y, x0:x1] = 1
 
-    def _eye_sad(self, cx: int, cy: int):
+    def _eye_sad(self, cx: int, cy: int, left: bool = False):
         self._fill_ellipse(cx, cy + 2, EYE_RX - 1, EYE_RY - 2)
         self._fill_ellipse(cx, cy + 2, PUPIL_R - 1, PUPIL_R - 1, 0)
-        self._line(cx - 5, cy - 9, cx + 3, cy - 6)
+        # Sad brow: inner corner raised, outer corner lowered — mirrored per eye
+        if left:
+            self._line(cx - 5, cy - 6, cx + 3, cy - 9)  # outer-low → inner-high
+        else:
+            self._line(cx - 5, cy - 9, cx + 3, cy - 6)  # inner-high → outer-low
 
     def _eye_look_side(self, cx: int, cy: int, shift: int = 0):
         self._fill_ellipse(cx, cy, EYE_RX, EYE_RY)
@@ -319,16 +323,18 @@ class ExpressionEngine:
             self._hline(cx - 4, y, cx + 4)
 
     def _m_smile(self, cx: int, y: int, w: int, h: int, thick: int):
+        # Vertex at bottom (y+h), arms rise toward the edges → smile shape ∪
         xs = np.arange(-w, w + 1)
-        ys = (y + h * (xs / w) ** 2).astype(int)
+        ys = (y + h - h * (xs / w) ** 2).astype(int)
         for t in range(thick):
             ys_t = ys + t
             mask = (xs + cx >= 0) & (xs + cx < W) & (ys_t >= 0) & (ys_t < H)
             self._buf[ys_t[mask], (xs + cx)[mask]] = 1
 
     def _m_frown(self, cx: int, y: int):
+        # Vertex at top (y), arms drop toward the edges → frown shape ∩
         xs = np.arange(-12, 13)
-        ys = (y + 6 - 6 * (xs / 12) ** 2).astype(int)
+        ys = (y + 6 * (xs / 12) ** 2).astype(int)
         for dy in range(2):
             mask = (xs + cx >= 0) & (xs + cx < W) & (ys + dy >= 0) & (ys + dy < H)
             self._buf[(ys + dy)[mask], (xs + cx)[mask]] = 1

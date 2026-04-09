@@ -1,14 +1,15 @@
 """LLM Client — OpenAI-Compatible API Integration"""
 
-import logging
 import json
-from typing import Optional, List, Dict, Any
+import logging
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 # Try to import openai, fallback to requests
 try:
     from openai import OpenAI
+
     HAS_OPENAI = True
 except ImportError:
     HAS_OPENAI = False
@@ -26,18 +27,82 @@ class LLMClient:
             config: Configuration object with llm_api_endpoint and optional api_key
         """
         self.config = config
-        self.endpoint = getattr(self.config, 'llm_api_endpoint', None) or "http://localhost:8080/v1"
-        self.api_key = getattr(self.config, 'llm_api_key', None) or "not-needed"
-        self.model_name = getattr(self.config, 'llm_model_name', None) or "model"
+        self.endpoint = (
+            getattr(self.config, "llm_api_endpoint", None) or "http://localhost:8080/v1"
+        )
+        self.api_key = getattr(self.config, "llm_api_key", None) or "not-needed"
+        self.model_name = getattr(self.config, "llm_model_name", None) or "model"
 
         # Generation settings
-        self.temperature = getattr(self.config, 'llm_temperature', 0.7)
-        self.max_tokens = getattr(self.config, 'llm_max_tokens', 512)
-        self.top_p = getattr(self.config, 'llm_top_p', 0.9)
+        self.temperature = getattr(self.config, "llm_temperature", 0.7)
+        self.max_tokens = getattr(self.config, "llm_max_tokens", 512)
+        self.top_p = getattr(self.config, "llm_top_p", 0.9)
+
+        _base = (
+            "Sei Fresh Buddy, un assistente AI amichevole integrato in un dispositivo fisico con un viso animato. "
+            "Rispondi SEMPRE in italiano, in modo naturale e conciso. "
+            "Non usare mai l'inglese o altre lingue, a meno che l'utente non ti scriva esplicitamente in un'altra lingua."
+            "Usa frasi brevi e concise, evitando l'utilizzo di emoji."
+        )
+        self._system_prompt_base = _base
+        # Extended version used when the backend doesn't support tool/function calling.
+        self._system_prompt_with_tag = (
+            _base + "\n\n"
+            "Alla fine di ogni risposta aggiungi SEMPRE, su una riga separata, il tag dell'emozione appropriata:\n"
+            "[EMOZIONE: <nome>]\n\n"
+            "Valori validi:\n"
+            "- neutral  → risposta informativa o descrittiva, tono piatto.\n"
+            "- happy    → risposta positiva, incoraggiante, accordo entusiasta.\n"
+            "- excited  → notizia straordinaria, entusiasmo genuino.\n"
+            "- sad      → cattive notizie, scuse, impossibilità di aiutare.\n"
+            "- confused → domanda ambigua, richiesta di chiarimenti."
+        )
+
+        # Tool definition for structured emotion + text output.
+        # Using tool_choice="required" forces the model to always return structured data
+        # instead of appending a fragile free-text tag.
+        self._respond_tool = {
+            "type": "function",
+            "function": {
+                "name": "respond",
+                "description": "Deliver your reply to the user together with the emotion that best matches your tone.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "The full response text in Italian.",
+                        },
+                        "emotion": {
+                            "type": "string",
+                            "enum": ["neutral", "happy", "excited", "sad", "confused"],
+                            "description": (
+                                "neutral: informative or descriptive reply, flat tone. "
+                                "happy: positive, encouraging, enthusiastic agreement. "
+                                "excited: extraordinary news, genuine enthusiasm, surprising discovery. "
+                                "sad: bad news, apologies, inability to help, regret. "
+                                "confused: ambiguous request, need clarification, uncertain answer."
+                            ),
+                        },
+                    },
+                    "required": ["text", "emotion"],
+                },
+            },
+        }
 
         self._client = None
         self._initialized = False
+        self._tool_calling_supported = (
+            True  # flipped to False on first failed tool call
+        )
         self._init_client()
+
+    @property
+    def default_system_prompt(self) -> str:
+        """Returns the appropriate system prompt depending on tool calling support."""
+        if self._tool_calling_supported:
+            return self._system_prompt_base
+        return self._system_prompt_with_tag
 
     def _init_client(self):
         """Initialize the API client."""
@@ -60,10 +125,7 @@ class LLMClient:
                 logger.info(f"LLM client connected to {self.endpoint}")
             else:
                 # Test with requests
-                response = requests.get(
-                    f"{self.endpoint}/models",
-                    timeout=10
-                )
+                response = requests.get(f"{self.endpoint}/models", timeout=10)
                 if response.ok:
                     self._initialized = True
                     logger.info(f"LLM client connected to {self.endpoint}")
@@ -96,33 +158,91 @@ class LLMClient:
 
         try:
             messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
+            messages.append(
+                {
+                    "role": "system",
+                    "content": system_prompt or self.default_system_prompt,
+                }
+            )
             messages.append({"role": "user", "content": prompt})
 
+            # Use tool calling only for conversational responses (no custom prompt)
+            # and only while the backend has shown it supports function calling.
+            use_tool = system_prompt is None and self._tool_calling_supported
+
             if HAS_OPENAI:
-                response = self._client.chat.completions.create(
+                kwargs = dict(
                     model=self.model_name,
                     messages=messages,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
                     top_p=self.top_p,
                 )
-                return response.choices[0].message.content
+                if use_tool:
+                    kwargs["tools"] = [self._respond_tool]
+                    kwargs["tool_choice"] = {"type": "function", "name": "respond"}
+
+                response = self._client.chat.completions.create(**kwargs)
+                choice = response.choices[0]
+
+                if use_tool:
+                    tool_calls = choice.message.tool_calls or []
+                    if tool_calls:
+                        args = json.loads(tool_calls[0].function.arguments)
+                        text = args.get("text", "")
+                        emotion = args.get("emotion", "neutral")
+                        logger.info(f"Tool call OK — emotion={emotion!r}")
+                        return f"{text}\n[EMOZIONE: {emotion}]"
+                    else:
+                        # Model didn't return a tool call despite tool_choice="required".
+                        # This means the backend doesn't support function calling.
+                        logger.warning(
+                            "Tool call expected but not returned "
+                            f"(finish_reason={choice.finish_reason!r}). "
+                            "Backend may not support function calling — "
+                            "falling back to tag-in-text mode."
+                        )
+                        self._tool_calling_supported = False
+
+                return choice.message.content
             else:
                 # Fallback to requests
+                body: dict = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                }
+                if use_tool:
+                    body["tools"] = [self._respond_tool]
+                    body["tool_choice"] = {"type": "function", "name": "respond"}
+
                 resp = requests.post(
                     f"{self.endpoint}/chat/completions",
-                    json={
-                        "model": self.model_name,
-                        "messages": messages,
-                        "temperature": self.temperature,
-                        "max_tokens": self.max_tokens,
-                    },
-                    timeout=120
+                    json=body,
+                    timeout=120,
                 )
                 resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
+                data = resp.json()
+                choice = data["choices"][0]
+
+                if use_tool:
+                    tool_calls = choice.get("message", {}).get("tool_calls") or []
+                    if tool_calls:
+                        args = json.loads(tool_calls[0]["function"]["arguments"])
+                        text = args.get("text", "")
+                        emotion = args.get("emotion", "neutral")
+                        logger.info(f"Tool call OK — emotion={emotion!r}")
+                        return f"{text}\n[EMOZIONE: {emotion}]"
+                    else:
+                        logger.warning(
+                            "Tool call expected but not returned. "
+                            "Backend may not support function calling — "
+                            "falling back to tag-in-text mode."
+                        )
+                        self._tool_calling_supported = False
+
+                return choice["message"]["content"]
 
         except Exception as e:
             logger.error(f"Generation error: {e}")
@@ -170,7 +290,7 @@ class LLMClient:
                         "temperature": self.temperature,
                         "max_tokens": self.max_tokens,
                     },
-                    timeout=120
+                    timeout=120,
                 )
                 resp.raise_for_status()
                 return resp.json()["choices"][0]["message"]["content"]

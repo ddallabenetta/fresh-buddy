@@ -3,6 +3,7 @@
 import argparse
 import logging
 import queue
+import re
 import signal
 import sys
 from pathlib import Path
@@ -17,8 +18,7 @@ from bmo.ai.llm_client import LLMClient
 from bmo.ai.meeting import MeetingAssistant
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class FreshBuddy:
         preview_server.configure(
             expressions=self.expressions,
             tts_url=self.config.tts_endpoint,
+            chat_callback=self._handle_chat_message,
         )
 
         # Setup signal handlers
@@ -65,9 +66,9 @@ class FreshBuddy:
         """Clean shutdown sequence."""
         logger.info("Shutting down Fresh Buddy...")
         self.expressions.show_expression("sleeping")
-        if hasattr(self.stt, 'stop'):
+        if hasattr(self.stt, "stop"):
             self.stt.stop()
-        if hasattr(self.tts, 'cleanup'):
+        if hasattr(self.tts, "cleanup"):
             self.tts.cleanup()
         logger.info("Fresh Buddy shutdown complete.")
 
@@ -155,28 +156,35 @@ class FreshBuddy:
 
         # General AI query
         self.expressions.show_expression("thinking")
-        response = self.llm.generate(text)
-
-        # Determine emotion from response, animate speaking while TTS plays
-        emotion = self._detect_emotion(response)
+        raw = self.llm.generate(text)
+        response, emotion = self._parse_response(raw)
         self._speak(response, post_expression=emotion)
         return response
 
-    def _detect_emotion(self, text: str) -> str:
-        """Detect emotion from text response."""
-        positive = ["happy", "great", "wonderful", "excellent", "good"]
-        negative = ["sad", "sorry", "unfortunately", "regret"]
-        excited = ["amazing", "wow", "incredible", "fantastic"]
+    def _handle_chat_message(self, message: str, callback):
+        """Handle a chat message from the dev console. Calls callback(response, expression) when done."""
+        self.expressions.show_expression("thinking")
+        raw = self.llm.generate(message)
+        response, emotion = self._parse_response(raw)
+        self._speak(response, post_expression=emotion)
+        callback(response, emotion)
 
-        text_lower = text.lower()
+    _EMOTION_TAG = re.compile(r"\[EMOZIONE:\s*(neutral|happy|excited|sad|confused)\]", re.IGNORECASE)
+    _VALID_EMOTIONS = {"neutral", "happy", "excited", "sad", "confused"}
 
-        if any(w in text_lower for w in excited):
-            return "excited"
-        if any(w in text_lower for w in positive):
-            return "happy"
-        if any(w in text_lower for w in negative):
-            return "sad"
-        return "neutral"
+    def _parse_response(self, raw: str) -> tuple[str, str]:
+        """Extract [EMOZIONE: xxx] tag from the LLM response.
+
+        Returns (clean_text, emotion). Falls back to 'neutral' if no tag found.
+        """
+        match = self._EMOTION_TAG.search(raw)
+        if match:
+            emotion = match.group(1).lower()
+            text = self._EMOTION_TAG.sub("", raw).strip()
+        else:
+            emotion = "neutral"
+            text = raw.strip()
+        return text, emotion
 
     def run_headless(self, query: str) -> str:
         """Run a single query without voice (for testing)."""

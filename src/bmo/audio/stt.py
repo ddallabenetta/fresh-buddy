@@ -4,6 +4,7 @@ import io
 import logging
 import queue
 import threading
+import time
 import wave
 from typing import Optional
 
@@ -28,6 +29,7 @@ class ParakeetSTT:
         """Probe for a usable input device."""
         try:
             import pyaudio
+
             p = pyaudio.PyAudio()
             count = p.get_device_count()
             p.terminate()
@@ -49,6 +51,7 @@ class ParakeetSTT:
         Returns WAV bytes (16-bit PCM, 16 kHz, mono), or None if no mic.
         """
         if not self._audio_available:
+            time.sleep(0.5)
             return None
 
         try:
