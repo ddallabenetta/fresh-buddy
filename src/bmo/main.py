@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import queue
 import signal
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 from bmo.config import Config
 from bmo.face.display import OLEDDisplay
 from bmo.face.expressions import ExpressionEngine
+from bmo.face import preview_server
 from bmo.audio.stt import ParakeetSTT
 from bmo.audio.tts import PiperTTS
 from bmo.ai.llm_client import LLMClient
@@ -37,6 +39,12 @@ class FreshBuddy:
         self.llm = LLMClient(self.config)
         self.meeting = MeetingAssistant(self.llm, self.stt, self.tts)
 
+        # Wire up interactive dev console (no-op if preview server not running)
+        preview_server.configure(
+            expressions=self.expressions,
+            tts_url=self.config.tts_endpoint,
+        )
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -51,7 +59,7 @@ class FreshBuddy:
         """Show startup animation."""
         logger.info("Fresh Buddy starting up...")
         self.expressions.show_expression("happy")
-        self.tts.speak("Ciao! Sono Fresh Buddy. Come posso aiutarti?")
+        self._speak("Ciao! Sono Fresh Buddy. Come posso aiutarti?")
 
     def shutdown(self):
         """Clean shutdown sequence."""
@@ -70,8 +78,21 @@ class FreshBuddy:
 
         logger.info("Fresh Buddy is ready! Listening for commands...")
 
+        _cmd_queue = preview_server.get_command_queue()
+
         while self.running:
             try:
+                # Drain simulated commands from the dev console first
+                try:
+                    simulated = _cmd_queue.get_nowait()
+                    logger.info(f"[dev] Simulated command: {simulated!r}")
+                    response = self._handle_command(simulated)
+                    if response:
+                        preview_server.put_response(response)
+                    continue
+                except queue.Empty:
+                    pass
+
                 # Listen for wake word or direct command
                 audio_data = self.stt.listen(timeout=30)
 
@@ -90,6 +111,13 @@ class FreshBuddy:
                 logger.error(f"Error in main loop: {e}", exc_info=True)
                 self.expressions.show_expression("confused")
 
+    def _speak(self, text: str, post_expression: str = None):
+        """Switch to speaking expression, play TTS, then restore expression."""
+        self.expressions.show_expression("speaking")
+        self.tts.speak(text)
+        restore = post_expression or self.expressions.current.value
+        self.expressions.show_expression(restore)
+
     def _is_wake_word(self, text: str) -> bool:
         """Check if text contains wake word."""
         wake_words = ["ciao buddy", "hey buddy", "buddy"]
@@ -99,7 +127,7 @@ class FreshBuddy:
     def _handle_wake(self, text: str):
         """Handle wake word detection."""
         self.expressions.show_expression("happy")
-        self.tts.speak("Yes?")
+        self._speak("Yes?")
 
         # Listen for command after wake
         audio_data = self.stt.listen(timeout=10)
@@ -107,33 +135,32 @@ class FreshBuddy:
             command = self.stt.transcribe(audio_data)
             self._handle_command(command)
 
-    def _handle_command(self, text: str):
-        """Route and execute commands."""
+    def _handle_command(self, text: str) -> str:
+        """Route and execute commands. Returns the response text (empty string for side-effect-only commands)."""
         text_lower = text.lower()
 
         # Meeting commands
         if "start meeting" in text_lower or "inizia riunione" in text_lower:
             self.meeting.start_recording()
-            return
+            return ""
 
         if "end meeting" in text_lower or "fine riunione" in text_lower:
             self.meeting.stop_recording()
-            return
+            return ""
 
         if "summarize meeting" in text_lower or "riassumi" in text_lower:
             summary = self.meeting.get_summary()
             self.tts.speak(summary)
-            return
+            return summary
 
         # General AI query
         self.expressions.show_expression("thinking")
         response = self.llm.generate(text)
 
-        # Determine emotion from response
+        # Determine emotion from response, animate speaking while TTS plays
         emotion = self._detect_emotion(response)
-        self.expressions.show_expression(emotion)
-
-        self.tts.speak(response)
+        self._speak(response, post_expression=emotion)
+        return response
 
     def _detect_emotion(self, text: str) -> str:
         """Detect emotion from text response."""
