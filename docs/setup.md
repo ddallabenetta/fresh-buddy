@@ -1,44 +1,42 @@
-# Software Setup Guide
+# Guida Installazione Software — Fresh Buddy
 
-## Prerequisites
+## Prerequisiti
 
-- NVIDIA Jetson Orin Nano with JetPack 5.x+ installed
-- Python 3.8+ installed
-- Git installed
-- CUDA available on system
+- NVIDIA Jetson Orin Nano con JetPack 5.x+ installato
+- Python 3.8+ installato
+- Git installato
+- CUDA disponibile sul sistema
 
-## Installation Steps
+## Passaggi di Installazione
 
-### 1. Clone the Repository
+### 1. Clona la Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/bmocompano.git
+git clone https://github.com/ddallabenetta/fresh-buddy.git
 cd bmocompano
 ```
 
-### 2. Run Installation Script
+### 2. Esegui lo Script di Installazione
 
 ```bash
 chmod +x scripts/install.sh
-./scripts/install.sh
+./scripts/installazione.sh
 ```
 
-The script will:
-- Create a Python virtual environment
-- Install system dependencies
-- Install Python dependencies
-- Download required AI models
+Lo script:
+- Crea un ambiente virtuale Python
+- Installa le dipendenze di sistema
+- Installa le dipendenze Python
+- Scarica i modelli AI necessari
 
-### 3. Manual Installation (Alternative)
-
-If you prefer manual setup:
+### 3. Installazione Manuale (Alternativa)
 
 ```bash
-# Create virtual environment
+# Crea ambiente virtuale
 python3 -m venv venv
 source venv/bin/activate
 
-# Install system dependencies
+# Installa dipendenze di sistema
 sudo apt-get update
 sudo apt-get install -y \
     python3-dev \
@@ -47,7 +45,7 @@ sudo apt-get install -y \
     libsndfile1 \
     portaudio19-dev
 
-# Install Python packages
+# Installa pacchetti Python
 pip install \
     numpy \
     pyaudio \
@@ -56,72 +54,63 @@ pip install \
     coqui-stt \
     coqui-stt-model-manager
 
-# Install Piper TTS
+# Installa Piper TTS
 pip install piper-tts
-pip install piper-download  # For downloading voices
+pip install piper-download
 ```
 
-### 4. Download AI Models
+### 4. Scarica i Modelli AI
 
 #### Nemotron 3 4B (LLM)
 
-Download the Nemotron model from HuggingFace:
-
 ```bash
-# Using huggingface-cli
 huggingface-cli download --local-dir models/nemotron-3-4b \
    NousResearch/Meta-Llama-3-8B-Instruct
-
-# Or manually download from:
-# https://huggingface.co/NousResearch/Meta-Llama-3-8B-Instruct
 ```
 
-Note: For Jetson Orin Nano, use the quantized GGUF version for better performance.
+Per Jetson Orin Nano, usa la versione quantizzata GGUF per performance migliori.
 
 #### Parakeet STT Model
 
 ```bash
-coqui-stt-model-manager download驿
-coqui-stt-model-manager use普通话 
+coqui-stt-model-manager download parakeet
 ```
 
-Or download manually from Coqui model hub.
-
-#### Piper TTS Voice
+#### Piper TTS Voice (Italiano)
 
 ```bash
-piper-download en_US-lessac-medium
+piper-download it_IT-riccardo-medium
 ```
 
-### 5. Configuration
+### 5. Configurazione
 
-Create `config.json` in the project root:
+Crea `config.json` nella root del progetto:
 
 ```json
 {
     "nemotron_model_path": "models/nemotron-3-4b/ggml-model.gguf",
     "parakeet_model_path": "models/parakeet/model",
-    "piper_model_path": "voices/en_US-lessac-medium.onnx",
+    "piper_model_path": "voices/it_IT-riccardo-medium.onnx",
     "i2c_bus": 1,
     "debug_mode": false
 }
 ```
 
-Or copy from example:
+Oppure copia da example:
 ```bash
 cp config.json.example config.json
 ```
 
-## Running BMO
+## Avviare Fresh Buddy
 
-### Normal Mode (with display and audio)
+### Modalità Normale (con display e audio)
 ```bash
 python -m bmo.main
 ```
 
-### Headless Mode (no display/audio, testing)
+### Modalità Headless (senza display/audio, testing)
 ```bash
-python -m bmo.main --query "Hello BMO"
+python -m bmo.main --query "Che ore sono?"
 ```
 
 ### Test Display
@@ -134,42 +123,40 @@ python -m bmo.main --test-face
 python -m bmo.main --test-audio
 ```
 
-## Virtual Environment
+## Ambiente Virtuale
 
-Always activate the venv before running:
+Attiva sempre il venv prima di eseguire:
 ```bash
 source venv/bin/activate
 ```
 
-## Updating
+## Aggiornamento
 
-Pull latest changes and reinstall:
+Scarica le ultime modifiche e reinstalla:
 ```bash
 git pull
 pip install -r requirements.txt
 ```
 
-## Docker Support (Optional)
-
-For containerized deployment:
+## Docker (Opzionale)
 
 ```bash
-# Build image
-docker build -t bmocompano .
+# Build immagine
+docker build -t fresh-buddy .
 
 # Run container
 docker run --device /dev/i2c-1 --device /dev/snd \
     -v $(pwd)/config.json:/app/config.json \
-    bmocompano
+    fresh-buddy
 ```
 
-## Performance Optimization
+## Ottimizzazione Performance
 
-### For Jetson Orin Nano 8GB:
-- Use 4-bit quantization for Nemotron
-- Set `n_gpu_layers=32` in llama-cpp config
-- Enable Jetson power mode: `sudo nvpmodel -m 1`
+### Per Jetson Orin Nano 8GB:
+- Usa quantizzazione a 4-bit per Nemotron
+- Imposta `n_gpu_layers=32` nella config llama-cpp
+- Abilita modalità risparmio energetico: `sudo nvpmodel -m 1`
 
-### Memory Optimization:
-- Reduce context window if running out of memory
-- Use swap file: `sudo fallocate -l 8G /swapfile`
+### Ottimizzazione Memoria:
+- Riduci la finestra di contesto se finisci la memoria
+- Usa swap file: `sudo fallocate -l 8G /swapfile`

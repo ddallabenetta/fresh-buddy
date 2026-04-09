@@ -149,8 +149,8 @@ class NemotronLLM:
         Returns:
             Summary text
         """
-        system_prompt = f"""You are BMO, a helpful AI assistant. Summarize the following text 
-        concisely in no more than {max_length} words. Focus on key points and action items."""
+        system_prompt = f"""Sei Fresh Buddy, un assistente AI gentile e utile. Riassumi il seguente testo 
+        in modo conciso in non più di {max_length} parole. Concentrati sui punti chiave e azioni da fare."""
 
         return self.generate(f"Summarize this:\n\n{text}", system_prompt)
 
@@ -164,13 +164,13 @@ class NemotronLLM:
         Returns:
             List of action items
         """
-        system_prompt = """You are BMO. Extract all action items from the following text.
-        Return a JSON list of action items, each with:
-        - task: description of the task
-        - assignee: who should do it (if mentioned)
-        - deadline: when it should be done (if mentioned)
+        system_prompt = """Sei Fresh Buddy. Estrai tutti i task e le azioni dal seguente testo.
+        Ritorna una lista JSON di azioni, ognuna con:
+        - task: descrizione del task
+        - assignee: chi dovrebbe farlo (se menzionato)
+        - deadline: quando dovrebbe essere completato (se menzionato)
 
-        Return ONLY the JSON list, nothing else."""
+        Ritorna SOLO la lista JSON, nient'altro."""
 
         response = self.generate(text, system_prompt)
 

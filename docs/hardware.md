@@ -1,121 +1,120 @@
-# Hardware Setup Guide
+# Guida Hardware — Fresh Buddy
 
-This guide covers the hardware assembly for BMO Companion.
+Questa guida copre l'assemblaggio hardware per Fresh Buddy.
 
-## Required Components
+## Componenti Necessari
 
-### Core Computing
-- **NVIDIA Jetson Orin Nano** (8GB recommended)
-  - Orin Nano 8GB: ~$599
-  - Orin NX 16GB: ~$699
-- **MicroSD Card** (64GB+ for OS and models)
-- **Power Supply** (5V/4A USB-C for Orin Nano)
+### Calcolo Principale
+- **NVIDIA Jetson Orin Nano** (8GB consigliato)
+  - Orin Nano 8GB: ~€550
+  - Orin NX 16GB: ~€650
+- **MicroSD Card** (64GB+ per OS e modelli)
+- **Alimentatore** (5V/4A USB-C per Orin Nano)
 
-### Display System
-- **Primary Display**: Small CRT monitor (optional, for retro aesthetic)
-- **OLED Display**: SSD1306 128x64 I2C OLED (~$10)
-  - Adafruit SSD1306 or equivalent
-  - Pins: SDA, SCL, VCC (3.3V), GND
-- **I2C wiring**: Connect to Jetson I2C bus (pins 3/SDA, 5/SCL)
+### Sistema Display
+- **Display OLED**: SSD1306 128x64 I2C (~$10)
+  - Adafruit SSD1306 o equivalente
+  - Pin: SDA, SCL, VCC (3.3V), GND
+- **Cablaggio I2C**: Collega ai pin I2C del Jetson (3/SDA, 5/SCL)
 
 ### Audio
-- **Microphone**: I2S microphone array or USB mic
-  - Recommended: ReSpeaker 4-Mic Array (~$30)
-  - Or: USB omnidirectional microphone
-- **Speakers**: 3W speaker or headphones
-  - Connects to 3.5mm audio jack
+- **Microfono**: Array microfonico I2S o USB
+  - Consigliato: ReSpeaker 4-Mic Array (~$30)
+  - Oppure: Microfono USB omnidirezionale
+- **Speaker**: Speaker 3W o cuffie
+  - Collega al jack audio 3.5mm
 
-### Housing
-- Old small CRT monitor
-- 3D printed case (optional, see STL files in assets/)
-- Mounting hardware, cables
+### Case
+- Piccolo monitor CRT (opzionale, per estetica retro)
+- Case stampato in 3D (opzionale)
+- Cavi e viti di montaggio
 
-## Wiring Diagram
+## Schema dei Cablaggi
 
 ```
-Jetson Orin Nano     OLED Display
+Jetson Orin Nano     Display OLED
 ----------------     ------------
 Pin 3 (I2C SDA)  →  SDA
 Pin 5 (I2C SCL)  →  SCL
 3.3V              →  VCC
 GND               →  GND
 
-Jetson Orin Nano     Microphone Array
+Jetson Orin Nano     Array Microfonico
 ----------------     -----------------
-Pin 3 (I2C SDA)  →  SDA (if I2S)
-Pin 5 (I2C SCL)  →  SCL (if I2S)
+Pin 3 (I2C SDA)  →  SDA (se I2S)
+Pin 5 (I2C SCL)  →  SCL (se I2S)
 3.3V              →  3.3V
 GND               →  GND
                   Or
-USB               →  USB mic (simpler)
+USB               →  USB mic (più semplice)
 ```
 
-## I2C Setup
+## Configurazione I2C
 
-1. Check I2C bus is available:
+1. Verifica che il bus I2C sia disponibile:
 ```bash
 ls /dev/i2c-*
 ```
 
-2. Install I2C tools:
+2. Installa gli strumenti I2C:
 ```bash
 sudo apt install i2c-tools
 ```
 
-3. Scan for devices:
+3. Scansiona i dispositivi:
 ```bash
 sudo i2cdetect -y -r 1
 ```
 
-4. You should see `3c` for the SSD1306 display
+4. Dovresti vedere `3c` per il display SSD1306
 
-## Audio Setup
+## Configurazione Audio
 
-1. Check audio devices:
+1. Verifica i dispositivi audio:
 ```bash
 arecord -l
 aplay -l
 ```
 
-2. Set default audio device in `config.json`:
+2. Imposta il dispositivo audio predefinito in `config.json`:
 ```json
 {
     "audio_device": 0
 }
 ```
 
-## Software Installation
+## Installazione Software
 
-After hardware assembly, run:
+Dopo l'assemblaggio hardware, esegui:
 ```bash
 ./scripts/install.sh
 ```
 
-## Testing
+## Test
 
-Test the display:
+Testa il display:
 ```bash
 python -m bmo.main --test-face
 ```
 
-Test audio:
+Testa l'audio:
 ```bash
 python -m bmo.main --test-audio
 ```
 
-## Troubleshooting
+## Risoluzione Problemi
 
-### Display not showing
-- Check I2C address (should be 0x3C)
-- Verify wiring connections
-- Run `i2cdetect` to confirm device detection
+### Display non funziona
+- Verifica l'indirizzo I2C (dovrebbe essere 0x3C)
+- Controlla i collegamenti
+- Esegui `i2cdetect` per confermare il rilevamento
 
-### Audio not working
-- Check microphone permissions: `arecord --dummy`
-- Install pulse audio: `sudo apt install pulseaudio`
-- Verify default device in system settings
+### Audio non funziona
+- Verifica i permessi del microfono: `arecord --dummy`
+- Installa pulse audio: `sudo apt install pulseaudio`
+- Controlla il dispositivo audio predefinito
 
-### Jetson won't boot
-- Use official NVIDIA JetPack image
-- Ensure power supply provides sufficient current
-- Check SD card is properly inserted
+### Jetson non si avvia
+- Usa l'immagine ufficiale NVIDIA JetPack
+- Assicurati che l'alimentazione sia sufficiente
+- Verifica che la SD sia inserita correttamente

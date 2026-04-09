@@ -1,4 +1,4 @@
-"""BMO Companion - Main Entry Point"""
+"""Fresh Buddy - Main Entry Point"""
 
 import argparse
 import logging
@@ -21,15 +21,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class BMOCompanion:
-    """Main BMO Companion application."""
+class FreshBuddy:
+    """Main Fresh Buddy application."""
 
     def __init__(self, config: Config = None):
         self.config = config or Config.load()
         self.running = False
 
         # Initialize components
-        logger.info("Initializing BMO Companion...")
+        logger.info("Initializing Fresh Buddy...")
         self.display = OLEDDisplay(self.config)
         self.expressions = ExpressionEngine(self.display)
         self.stt = ParakeetSTT(self.config)
@@ -49,26 +49,26 @@ class BMOCompanion:
 
     def startup(self):
         """Show startup animation."""
-        logger.info("BMO starting up...")
+        logger.info("Fresh Buddy starting up...")
         self.expressions.show_expression("happy")
-        self.tts.speak("Hello! I'm BMO. How can I help you today?")
+        self.tts.speak("Ciao! Sono Fresh Buddy. Come posso aiutarti?")
 
     def shutdown(self):
         """Clean shutdown sequence."""
-        logger.info("Shutting down BMO...")
+        logger.info("Shutting down Fresh Buddy...")
         self.expressions.show_expression("sleeping")
         if hasattr(self.stt, 'stop'):
             self.stt.stop()
         if hasattr(self.tts, 'cleanup'):
             self.tts.cleanup()
-        logger.info("BMO shutdown complete.")
+        logger.info("Fresh Buddy shutdown complete.")
 
     def run(self):
         """Main interaction loop."""
         self.startup()
         self.running = True
 
-        logger.info("BMO is ready! Listening for commands...")
+        logger.info("Fresh Buddy is ready! Listening for commands...")
 
         while self.running:
             try:
@@ -92,7 +92,7 @@ class BMOCompanion:
 
     def _is_wake_word(self, text: str) -> bool:
         """Check if text contains wake word."""
-        wake_words = ["hey bmo", "bm0", "b m o"]
+        wake_words = ["ciao buddy", "hey buddy", "buddy"]
         text_lower = text.lower().strip()
         return any(w in text_lower for w in wake_words)
 
@@ -157,7 +157,7 @@ class BMOCompanion:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="BMO Companion - Local AI Assistant")
+    parser = argparse.ArgumentParser(description="Fresh Buddy - Local AI Assistant")
     parser.add_argument("--config", type=Path, help="Path to config file")
     parser.add_argument("--query", type=str, help="Run single query (headless mode)")
     parser.add_argument("--test-face", action="store_true", help="Test face display")
@@ -167,8 +167,8 @@ def main():
     if args.query:
         # Headless single query mode
         config = Config.load(args.config) if args.config else Config.load()
-        bmo = BMOCompanion(config)
-        response = bmo.run_headless(args.query)
+        buddy = FreshBuddy(config)
+        response = buddy.run_headless(args.query)
         print(response)
     elif args.test_face:
         # Test display only
@@ -182,7 +182,7 @@ def main():
         stt = ParakeetSTT(config)
         tts = PiperTTS(config)
         print("Testing TTS...")
-        tts.speak("Hello, I am BMO!")
+        tts.speak("Ciao, sono Fresh Buddy!")
         print("Testing STT... Speak now:")
         audio = stt.listen(timeout=5)
         if audio:
@@ -191,8 +191,8 @@ def main():
     else:
         # Normal interactive mode
         config = Config.load(args.config) if args.config else Config.load()
-        bmo = BMOCompanion(config)
-        bmo.run()
+        buddy = FreshBuddy(config)
+        buddy.run()
 
 
 if __name__ == "__main__":

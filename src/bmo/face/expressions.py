@@ -1,4 +1,4 @@
-"""Expression Engine for BMO Face Animations"""
+"""Expression Engine for Fresh Buddy Face Animations"""
 
 import logging
 import time
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class Expression(Enum):
-    """BMO facial expressions."""
+    """Fresh Buddy facial expressions."""
     HAPPY = "happy"
     SAD = "sad"
     CONFUSED = "confused"
@@ -24,7 +24,7 @@ class Expression(Enum):
 
 
 class ExpressionEngine:
-    """Manages BMO facial expressions and animations."""
+    """Manages Fresh Buddy facial expressions and animations."""
 
     def __init__(self, display):
         """
@@ -132,8 +132,8 @@ class ExpressionEngine:
             self._draw_eye_open(screen_x + 37, eye_y)
             self._draw_smile(screen_x + 20, screen_y + 22)
 
-        # Draw "BMO" label at bottom
-        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "BMO")
+        # Draw "Buddy" label at bottom
+        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "Buddy")
 
         self.display.show()
 
@@ -346,7 +346,7 @@ class ExpressionEngine:
         # Closed eyes
         self._draw_eye_line(screen_x + 18, screen_y + 14, 10)
         self._draw_eye_line(screen_x + 40, screen_y + 14, 10)
-        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "BMO")
+        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "Buddy")
 
     def _render_static_thinking(self, dot_phase: int):
         """Render thinking face with animated dots."""
@@ -366,7 +366,7 @@ class ExpressionEngine:
                 self.display.set_pixel(screen_x + 50 + i * 6, screen_y + 11)
         # Small smile
         self._draw_small_smile(screen_x + 22, screen_y + 22)
-        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "BMO")
+        self.display.draw_text(screen_x + 24, screen_y + screen_h - 10, "Buddy")
 
     def _draw_zzz(self, x: int, y: int):
         """Draw sleeping Z's."""

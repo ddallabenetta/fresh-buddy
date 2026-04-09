@@ -1,4 +1,4 @@
-"""Configuration Management for BMO Companion"""
+"""Configuration Management for Fresh Buddy"""
 
 import os
 import json
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Config:
-    """BMO Companion configuration."""
+    """Fresh Buddy configuration."""
 
     # Hardware settings
     i2c_bus: int = 1
@@ -25,7 +25,7 @@ class Config:
     piper_model_path: Optional[str] = None
 
     # Piper TTS settings
-    piper_voice: str = "en_US-lessac-medium"
+    piper_voice: str = "it_IT-riccardo-medium"
     piper_speaker: Optional[int] = None
     piper_noise_scale: float = 0.667
     piper_length_scale: float = 1.0
@@ -40,7 +40,7 @@ class Config:
     meeting_summary_length: int = 300
 
     # Wake word settings
-    wake_word: str = "hey bmo"
+    wake_word: str = "ciao buddy"
     wake_word_sensitivity: float = 0.5
 
     # Debug settings
@@ -147,7 +147,7 @@ DEFAULT_CONFIG_JSON = """
     "parakeet_model_path": null,
     "piper_model_path": null,
 
-    "piper_voice": "en_US-lessac-medium",
+    "piper_voice": "it_IT-riccardo-medium",
     "piper_speaker": null,
     "piper_noise_scale": 0.667,
     "piper_length_scale": 1.0,
@@ -159,7 +159,7 @@ DEFAULT_CONFIG_JSON = """
     "meeting_storage_dir": "meetings",
     "meeting_summary_length": 300,
 
-    "wake_word": "hey bmo",
+    "wake_word": "ciao buddy",
     "wake_word_sensitivity": 0.5,
 
     "debug_mode": false,

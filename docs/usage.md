@@ -1,120 +1,120 @@
-# Usage Guide
+# Guida Utilizzo — Fresh Buddy
 
-## Starting BMO
+## Avviare Fresh Buddy
 
 ```bash
 source venv/bin/activate
 python -m bmo.main
 ```
 
-BMO will:
-1. Initialize all hardware components
-2. Show startup animation on OLED
-3. Greet you with voice: "Hello! I'm BMO. How can I help you today?"
-4. Listen for voice commands
+Fresh Buddy:
+1. Inizializza tutti i componenti hardware
+2. Mostra animazione di avvio sul display OLED
+3. Ti saluta con voce: "Ciao! Sono Fresh Buddy. Come posso aiutarti?"
+4. Ascolta i comandi vocali
 
-## Voice Commands
+## Comandi Vocali
 
-### Basic Interaction
-- Say "Hey BMO" to get BMO's attention
-- After the wake word, speak your question or command
-- BMO will respond with voice and expression changes
+### Interazione Base
+- Dì "**Ciao Buddy**" per attirare l'attenzione di Fresh Buddy
+- Dopo la wake word, parla la tua domanda o comando
+- Fresh Buddy risponderà con voce ed espressioni
 
-### Meeting Commands
+### Comandi Meeting
 
-| Command | Description |
+| Comando | Descrizione |
 |---------|-------------|
-| "Hey BMO, start meeting" | Begin recording meeting |
-| "Hey BMO, end meeting" | Stop recording and generate summary |
-| "Hey BMO, summarize meeting" | Get summary of last meeting |
+| "Ciao Buddy, avvia meeting" | Inizia registrazione meeting |
+| "Ciao Buddy, termina meeting" | Ferma registrazione e genera riepilogo |
+| "Ciao Buddy, riepiloga meeting" | Ottieni riepilogo dell'ultimo meeting |
 
-### Examples
+### Esempi
 
-**Starting a meeting:**
+**Avviare un meeting:**
 ```
-You: "Hey BMO, start meeting"
-BMO: "Meeting recording started."
-(Recording indicator shows on display)
-```
-
-**Having a conversation:**
-```
-You: "Hey BMO, what is the capital of France?"
-BMO: (thinking expression)
-BMO: "The capital of France is Paris."
+Tu: "Ciao Buddy, avvia meeting"
+Fresh Buddy: "Registrazione meeting iniziata."
+(Indicatore rosso sul display)
 ```
 
-**Ending a meeting:**
+**Avere una conversazione:**
 ```
-You: "Hey BMO, end meeting"
-BMO: "Meeting recording stopped. Generating summary..."
-BMO: (reads summary aloud)
+Tu: "Ciao Buddy, qual è la capitale della Francia?"
+Fresh Buddy: (espressione pensante)
+Fresh Buddy: "La capitale della Francia è Parigi."
 ```
 
-## Display Expressions
+**Terminare un meeting:**
+```
+Tu: "Ciao Buddy, termina meeting"
+Fresh Buddy: "Registrazione meeting terminata. Sto generando il riepilogo..."
+Fresh Buddy: (legge il riepilogo ad alta voce)
+```
 
-BMO shows different expressions:
+## Espressioni del Display
 
-| Expression | When |
-|-----------|------|
-| 😊 Happy | Positive responses |
-| 😢 Sad | Apologetic or sad news |
-| 🤔 Thinking | Processing complex queries |
-| 😮 Excited | Very positive or surprising info |
-| 😕 Confused | Unclear or misunderstood input |
-| 😴 Sleeping | Idle/inactive state |
-| 🔴 Recording | Meeting is being recorded |
-| 👂 Listening | Active listening mode |
+Fresh Buddy mostra diverse espressioni:
 
-## Meetings
+| Espressione | Quando |
+|-------------|--------|
+| 😊 Felice | Risposte positive |
+| 😢 Triste | Scuse o notizie tristi |
+| 🤔 Pensante | Elaborazione query complesse |
+| 😮 Eccitato | Info molto positive o sorprendenti |
+| 😕 Confuso | Input non chiaro o frainteso |
+| 😴 Addormentato | Stato idle/inattivo |
+| 🔴 Registrazione | Meeting in registrazione |
+| 👂 Ascolto | Modalità ascolto attivo |
 
-### Meeting Flow
+## Meeting
 
-1. **Start**: "Hey BMO, start meeting"
-2. **During**: All spoken content is transcribed
-3. **End**: "Hey BMO, end meeting"
-4. **Summary**: BMO generates and reads summary
+### Flusso Meeting
 
-### Saved Meeting Data
+1. **Avvio**: "Ciao Buddy, avvia meeting"
+2. **Durante**: Tutto il contenuto parlato viene trascritto
+3. **Termine**: "Ciao Buddy, termina meeting"
+4. **Riepilogo**: Fresh Buddy genera e legge il riepilogo
 
-Meetings are saved to `meetings/` directory:
+### Dati Meeting Salvati
+
+I meeting vengono salvati nella directory `meetings/`:
 
 ```
 meetings/
-├── 20260408_143000_minutes.json  # Structured summary
-└── 20260408_143000_transcript.txt # Full transcript
+├── 20260408_143000_minutes.json  # Riepilogo strutturato
+└── 20260408_143000_transcript.txt # Trascrizione completa
 ```
 
-### Meeting Minutes Format
+### Formato Riepilogo Meeting
 
 ```json
 {
     "meeting_id": "20260408_143000",
     "date": "2026-04-08T14:30:00",
     "duration_seconds": 1800,
-    "summary": "Team discussed Q2 roadmap...",
+    "summary": "Il team ha discusso il roadmap Q2...",
     "action_items": [
-        {"task": "Review PR #123", "assignee": "Alice", "deadline": "Friday"}
+        {"task": "Rivedi PR #123", "assignee": "Alice", "deadline": "Venerdì"}
     ],
-    "decisions": ["Approved budget increase"],
+    "decisions": ["Approvato aumento budget"],
     "participants": ["Alice", "Bob", "Charlie"]
 }
 ```
 
-## Configuration
+## Configurazione
 
-Edit `config.json` to customize:
+Modifica `config.json` per personalizzare:
 
-### Voice Settings
+### Impostazioni Voce
 ```json
 {
-    "piper_voice": "en_US-lessac-medium",
+    "piper_voice": "it_IT-riccardo-medium",
     "piper_speaker": null,
     "piper_length_scale": 1.0
 }
 ```
 
-### LLM Settings
+### Impostazioni LLM
 ```json
 {
     "nemotron_temperature": 0.7,
@@ -125,47 +125,47 @@ Edit `config.json` to customize:
 ### Wake Word
 ```json
 {
-    "wake_word": "hey bmo",
+    "wake_word": "ciao buddy",
     "wake_word_sensitivity": 0.5
 }
 ```
 
-## Troubleshooting
+## Risoluzione Problemi
 
-### BMO doesn't respond to wake word
-- Check microphone is working: `python -m bmo.main --test-audio`
-- Lower wake word sensitivity in config
-- Speak closer to microphone
+### Fresh Buddy non risponde alla wake word
+- Verifica che il microfono funzioni: `python -m bmo.main --test-audio`
+- Abbassa la sensibilità della wake word nel config
+- Avvicinati al microfono
 
-### Responses are slow
-- Nemotron model may need quantization
-- Check Jetson thermal throttling
-- Reduce `nemotron_max_tokens`
+### Le risposte sono lente
+- Il modello Nemotron potrebbe necessitare quantizzazione
+- Controlla thermal throttling del Jetson
+- Riduci `nemotron_max_tokens`
 
-### Audio quality is poor
-- Use higher quality microphone
-- Adjust audio input gain in system settings
-- Try USB microphone instead of I2S
+### Qualità audio scarsa
+- Usa un microfono di qualità superiore
+- Regola il gain di input audio nelle impostazioni di sistema
+- Prova microfono USB invece di I2S
 
-## API Usage
+## Uso Programmatico
 
-BMO can be used programmatically:
+Fresh Buddy può essere usato programmaticamente:
 
 ```python
-from bmo.main import BMOCompanion
+from bmo.main import FreshBuddy
 from bmo.config import Config
 
-# Load config
+# Carica config
 config = Config.load()
 
-# Create BMO instance
-bmo = BMOCompanion(config)
+# Crea istanza Fresh Buddy
+buddy = FreshBuddy(config)
 
-# Query without voice
-response = bmo.run_headless("What time is it?")
+# Query senza voce
+response = buddy.run_headless("Che ore sono?")
 print(response)
 
-# Get meeting summary
-summary = bmo.meeting.get_summary()
+# Ottieni riepilogo meeting
+summary = buddy.meeting.get_summary()
 print(summary)
 ```
