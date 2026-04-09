@@ -1,69 +1,82 @@
-"""Nemotron LLM Integration"""
+"""Nemotron LLM Integration via OpenAI-Compatible API"""
 
 import logging
 import json
 from typing import Optional, List, Dict, Any
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Try to import openai, fallback to requests
+try:
+    from openai import OpenAI
+    HAS_OPENAI = True
+except ImportError:
+    HAS_OPENAI = False
+    import requests
+
 
 class NemotronLLM:
-    """Interface to Nemotron 3 4B running locally."""
+    """Interface to LLM via OpenAI-compatible API endpoint."""
 
     def __init__(self, config=None):
         """
-        Initialize Nemotron LLM.
+        Initialize LLM API client.
 
         Args:
-            config: Configuration object
+            config: Configuration object with llm_api_endpoint and optional api_key
         """
         self.config = config
-        self.model_path = getattr(self.config, 'nemotron_model_path', None)
-        self.model = None
-        self.tokenizer = None
-        self._initialized = False
+        self.endpoint = getattr(self.config, 'llm_api_endpoint', None) or "http://localhost:8080/v1"
+        self.api_key = getattr(self.config, 'llm_api_key', None) or "not-needed"
+        self.model_name = getattr(self.config, 'llm_model_name', None) or "nemotron"
 
         # Generation settings
         self.temperature = getattr(self.config, 'nemotron_temperature', 0.7)
         self.max_tokens = getattr(self.config, 'nemotron_max_tokens', 512)
         self.top_p = getattr(self.config, 'nemotron_top_p', 0.9)
 
-        self._init_model()
+        self._client = None
+        self._initialized = False
+        self._init_client()
 
-    def _init_model(self):
-        """Initialize the Nemotron model."""
-        try:
-            # Try llama-cpp-python first (supports Nemotron)
-            from llama_cpp import Llama
-
-            if self.model_path and Path(self.model_path).exists():
-                logger.info(f"Loading Nemotron from {self.model_path}")
-                self.model = Llama(
-                    model_path=str(self.model_path),
-                    n_ctx=4096,  # Context window
-                    n_gpu_layers=32,  # Layers for Jetson Orin
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    top_p=self.top_p,
-                    verbose=False
-                )
-                self._initialized = True
-                logger.info("Nemotron model loaded successfully")
-            else:
-                logger.warning(f"Nemotron model not found at {self.model_path}")
-                logger.info("Set nemotron_model_path in config or download model")
-
-        except ImportError:
-            logger.warning("llama-cpp-python not available")
-            logger.info("Install: pip install llama-cpp-python")
+    def _init_client(self):
+        """Initialize the API client."""
+        if not self.endpoint:
+            logger.warning("No LLM API endpoint configured")
+            logger.info("Set llm_api_endpoint in config or use docker-compose")
             self._init_mock_mode()
+            return
+
+        try:
+            if HAS_OPENAI:
+                self._client = OpenAI(
+                    base_url=self.endpoint,
+                    api_key=self.api_key,
+                    timeout=120.0,
+                )
+                # Test connection
+                self._client.models.list()
+                self._initialized = True
+                logger.info(f"LLM client connected to {self.endpoint}")
+            else:
+                # Test with requests
+                response = requests.get(
+                    f"{self.endpoint}/models",
+                    timeout=10
+                )
+                if response.ok:
+                    self._initialized = True
+                    logger.info(f"LLM client connected to {self.endpoint}")
+                else:
+                    raise Exception(f"API returned {response.status_code}")
+
         except Exception as e:
-            logger.error(f"Failed to load Nemotron: {e}")
+            logger.warning(f"Could not connect to LLM API: {e}")
+            logger.info("Running in MOCK mode - responses will be simulated")
             self._init_mock_mode()
 
     def _init_mock_mode(self):
-        """Initialize mock mode for testing without GPU."""
+        """Initialize mock mode for testing without API."""
         logger.info("Running in MOCK mode - responses will be simulated")
         self._initialized = False
 
@@ -82,21 +95,34 @@ class NemotronLLM:
             return self._mock_generate(prompt, system_prompt)
 
         try:
-            # Build messages format for chat completion
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            # Generate response
-            response = self.model.create_chat_completion(
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                top_p=self.top_p,
-            )
-
-            return response['choices'][0]['message']['content']
+            if HAS_OPENAI:
+                response = self._client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    top_p=self.top_p,
+                )
+                return response.choices[0].message.content
+            else:
+                # Fallback to requests
+                resp = requests.post(
+                    f"{self.endpoint}/chat/completions",
+                    json={
+                        "model": self.model_name,
+                        "messages": messages,
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                    },
+                    timeout=120
+                )
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
 
         except Exception as e:
             logger.error(f"Generation error: {e}")
@@ -105,12 +131,11 @@ class NemotronLLM:
     def _mock_generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Mock generation for testing."""
         mock_responses = [
-            "I understand. Let me help you with that.",
-            "That's an interesting question. Here's what I think...",
-            "I've noted that. Is there anything specific you'd like me to do?",
-            "Got it! I'm here to help with your meeting notes.",
+            "Capisco. Fammi pensare... come posso aiutarti?",
+            "Interessante domanda. Ecco cosa ne penso...",
+            "Ho capito. C'è qualcosa di specifico che vuoi che faccia?",
+            "Ricevuto! Sono qui per aiutarti con i tuoi appunti.",
         ]
-        # Simple hash to get consistent response for same input
         response_idx = hash(prompt) % len(mock_responses)
         return mock_responses[response_idx]
 
@@ -128,15 +153,31 @@ class NemotronLLM:
             return self._mock_generate(str(messages))
 
         try:
-            response = self.model.create_chat_completion(
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-            return response['choices'][0]['message']['content']
+            if HAS_OPENAI:
+                response = self._client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                return response.choices[0].message.content
+            else:
+                resp = requests.post(
+                    f"{self.endpoint}/chat/completions",
+                    json={
+                        "model": self.model_name,
+                        "messages": messages,
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                    },
+                    timeout=120
+                )
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
+
         except Exception as e:
             logger.error(f"Chat error: {e}")
-            return "I'm having trouble processing that right now."
+            return "Sto avendo problemi a elaborare la richiesta."
 
     def summarize(self, text: str, max_length: int = 200) -> str:
         """
@@ -149,9 +190,11 @@ class NemotronLLM:
         Returns:
             Summary text
         """
-        system_prompt = f"""Sei Fresh Buddy, un assistente AI gentile e utile. Riassumi il seguente testo 
-        in modo conciso in non più di {max_length} parole. Concentrati sui punti chiave e azioni da fare."""
-
+        system_prompt = (
+            f"Sei Fresh Buddy, un assistente AI gentile e utile. "
+            f"Riassumi il seguente testo in modo conciso in non più di {max_length} parole. "
+            f"Concentrati sui punti chiave e azioni da fare."
+        )
         return self.generate(f"Summarize this:\n\n{text}", system_prompt)
 
     def extract_action_items(self, text: str) -> List[str]:
@@ -164,18 +207,18 @@ class NemotronLLM:
         Returns:
             List of action items
         """
-        system_prompt = """Sei Fresh Buddy. Estrai tutti i task e le azioni dal seguente testo.
-        Ritorna una lista JSON di azioni, ognuna con:
-        - task: descrizione del task
-        - assignee: chi dovrebbe farlo (se menzionato)
-        - deadline: quando dovrebbe essere completato (se menzionato)
-
-        Ritorna SOLO la lista JSON, nient'altro."""
+        system_prompt = (
+            "Sei Fresh Buddy. Estrai tutti i task e le azioni dal seguente testo. "
+            "Ritorna una lista JSON di azioni, ognuna con: "
+            "- task: descrizione del task "
+            "- assignee: chi dovrebbe farlo (se menzionato) "
+            "- deadline: quando dovrebbe essere completato (se menzionato) "
+            "Ritorna SOLO la lista JSON, nient'altro."
+        )
 
         response = self.generate(text, system_prompt)
 
         try:
-            # Try to parse as JSON
             action_items = json.loads(response)
             return action_items
         except json.JSONDecodeError:
@@ -191,5 +234,5 @@ class NemotronLLM:
         self.max_tokens = max_tokens
 
     def is_initialized(self) -> bool:
-        """Check if model is loaded and ready."""
+        """Check if API client is connected and ready."""
         return self._initialized

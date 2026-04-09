@@ -24,6 +24,11 @@ class Config:
     parakeet_model_path: Optional[str] = None
     piper_model_path: Optional[str] = None
 
+    # LLM API settings (OpenAI-compatible endpoint)
+    llm_api_endpoint: Optional[str] = "http://llm-server:8080/v1"
+    llm_api_key: Optional[str] = "not-needed"
+    llm_model_name: Optional[str] = "nemotron"
+
     # Piper TTS settings
     piper_voice: str = "it_IT-riccardo-medium"
     piper_speaker: Optional[int] = None
@@ -146,6 +151,10 @@ DEFAULT_CONFIG_JSON = """
     "nemotron_model_path": null,
     "parakeet_model_path": null,
     "piper_model_path": null,
+
+    "llm_api_endpoint": "http://llm-server:8080/v1",
+    "llm_api_key": "not-needed",
+    "llm_model_name": "nemotron",
 
     "piper_voice": "it_IT-riccardo-medium",
     "piper_speaker": null,

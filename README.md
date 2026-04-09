@@ -1,16 +1,17 @@
 # Fresh Buddy 🤖
 
-**Private, Fully-Local AI Companion on Jetson Orin Nano**
+**Private AI Companion — Docker-Deployable on Jetson Orin Nano**
 
-A private, fully-local AI assistant with an animated OLED face, running on NVIDIA Jetson Orin Nano with Nemotron 3 4B, Parakeet STT, and Piper TTS.
+Fresh Buddy è un assistente AI vocale privato con viso OLED animato. L'architettura è containerizzata: il servizio LLM (llama.cpp) è separato dall'applicazione principale, permettendo deploy flessibili su GPU dedicata o in cloud.
 
 ## 🎯 Features
 
-- **Local AI**: Nemotron 3 4B running fully on-device
-- **Voice Interaction**: Parakeet STT + Piper TTS pipeline
-- **Expressive Face**: OLED display showing dynamic expressions
+- **Decoupled LLM**: OpenAI-compatible API, deployabile separatamente
+- **Voice Interaction**: Parakeet STT + Piper TTS (locali)
+- **Expressive Face**: OLED display with dynamic expressions
 - **Meeting Assistant**: Records, transcribes, and summarizes meetings
 - **Privacy First**: Everything runs locally, no cloud dependencies
+- **Docker-Ready**: Full stack deployable with docker-compose
 
 ## 🖥️ Hardware Requirements
 
@@ -20,33 +21,61 @@ A private, fully-local AI assistant with an animated OLED face, running on NVIDI
 - I2S microphone array or USB mic
 - Speakers or headphone output
 
-## 📦 Quick Start
+## 🚀 Docker Deployment (Consigliato)
+
+```bash
+git clone https://github.com/ddallabenetta/fresh-buddy.git
+cd fresh-buddy
+
+# Configura
+cp .env.example .env
+mkdir -p models
+# Copia il tuo modello GGUF in models/model.gguf
+
+# Build e avvio
+docker compose build
+docker compose up -d
+```
+
+## 📦 Development Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/ddallabenetta/fresh-buddy.git
-cd bmocompano
+cd fresh-buddy
 
-# Run installation
-chmod +x scripts/install.sh
-./scripts/install.sh
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
 
-# Start Fresh Buddy
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure (point to your LLM server)
+cp .env.example .env
+# Edit .env with your LLM endpoint
+
+# Run
 python -m bmo.main
 ```
 
 ## 🏗️ Architecture
 
 ```
-bmocompano/
-├── src/bmo/
+fresh-buddy/
+├── src/bmo/              # Fresh Buddy application
 │   ├── main.py           # Entry point
-│   ├── face/            # OLED display and expression rendering
-│   ├── audio/           # Parakeet STT and Piper TTS
-│   └── ai/              # Nemotron integration and meeting utils
-├── docs/                # Documentation
-├── tests/               # Unit and integration tests
-└── scripts/             # Installation and setup scripts
+│   ├── face/             # OLED display and expression rendering
+│   ├── audio/            # Parakeet STT and Piper TTS
+│   └── ai/               # LLM client (OpenAI-compatible API)
+├── server/               # LLM Server (llama.cpp)
+│   ├── Dockerfile        # GPU-enabled LLM server image
+│   └── models/           # GGUF model files
+├── docs/                 # Documentation
+├── tests/                # Unit and integration tests
+├── docker-compose.yml    # Full stack orchestration
+├── Dockerfile.client     # Fresh Buddy container
+└── .env.example          # Environment configuration
 ```
 
 ## 🎨 Expression System
@@ -66,6 +95,7 @@ Fresh Buddy's face changes based on:
 
 ## 📄 Documentation
 
+- [Deployment Guide](docs/deployment.md) — Docker stack setup
 - [Hardware Setup](docs/hardware.md)
 - [Software Installation](docs/setup.md)
 - [Usage Guide](docs/usage.md)

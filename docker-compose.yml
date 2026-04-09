@@ -1,0 +1,78 @@
+version: "3.8"
+
+services:
+  # LLM Server - llama.cpp with OpenAI-compatible API
+  llm-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: fresh-buddy/llm-server:latest
+    container_name: fresh-buddy-llm
+    ports:
+      - "${LLM_PORT:-8080}:8080"
+    volumes:
+      # Mount your GGUF model file here
+      - ${MODEL_PATH:-./models}:/models:ro
+    environment:
+      - MODEL_NAME=${MODEL_NAME:-nemotron}
+      - CONTEXT_SIZE=${CONTEXT_SIZE:-4096}
+      - N_GPU_LAYERS=${N_GPU_LAYERS:-32}
+    # GPU access (remove if running on CPU only)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Fresh Buddy - Voice AI Companion
+  fresh-buddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    image: fresh-buddy/app:latest
+    container_name: fresh-buddy
+    depends_on:
+      llm-server:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-5000}:5000"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./meetings:/app/meetings
+    environment:
+      - LLM_API_ENDPOINT=http://llm-server:8080/v1
+      - LLM_API_KEY=${LLM_API_KEY:-not-needed}
+      - LLM_MODEL_NAME=${MODEL_NAME:-nemotron}
+      - PIPER_VOICE=${PIPER_VOICE:-it_IT-riccardo-medium}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    # Audio device access (for USB mic/speaker)
+    devices:
+      - /dev/snd:/dev/snd
+    # I2C access (for OLED display)
+    # group_add:
+    #   - i2c
+    restart: unless-stopped
+
+  # Optional: Build Qwen locally (for advanced users)
+  # build-llm:
+  #   image: nvidia/cuda:12.4.0-devel-ubuntu22.04
+  #   working_dir: /app
+  #   volumes:
+  #     - ./server/models:/models
+  #   command: >
+  #     bash -c "apt-get update && apt-get install -y build-essential cmake git python3 && 
+  #     git clone https://github.com/ggerganov/llama.cpp && 
+  #     cd llama.cpp && 
+  #     mkdir build && cd build && 
+  #     cmake .. -DLLAMA_CUBLAS=ON && 
+  #     cmake --build . --config Release -j$(nproc)"
