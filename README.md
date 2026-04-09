@@ -24,7 +24,7 @@ A private, fully-local AI assistant featuring a animated face inspired by Advent
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/bmocompano.git
+git clone https://github.com/ddallabenetta/fresh-buddy.git
 cd bmocompano
 
 # Run installation
