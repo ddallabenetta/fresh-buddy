@@ -1,14 +1,14 @@
-# BMOCompano 🤖
+# Fresh Buddy 🤖
 
-**Fresh Buddy — Local AI Companion on Jetson Orin Nano**
+**Private, Fully-Local AI Companion on Jetson Orin Nano**
 
-A private, fully-local AI assistant featuring a animated face inspired by Adventure Time's BMO, running on NVIDIA Jetson Orin Nano with Nemotron 3 4B, Parakeet STT, and Piper TTS.
+A private, fully-local AI assistant with an animated OLED face, running on NVIDIA Jetson Orin Nano with Nemotron 3 4B, Parakeet STT, and Piper TTS.
 
 ## 🎯 Features
 
 - **Local AI**: Nemotron 3 4B running fully on-device
 - **Voice Interaction**: Parakeet STT + Piper TTS pipeline
-- **Expressive Face**: OLED display showing BMO-like character with dynamic expressions
+- **Expressive Face**: OLED display showing dynamic expressions
 - **Meeting Assistant**: Records, transcribes, and summarizes meetings
 - **Privacy First**: Everything runs locally, no cloud dependencies
 
@@ -16,8 +16,8 @@ A private, fully-local AI assistant featuring a animated face inspired by Advent
 
 - NVIDIA Jetson Orin Nano (8GB recommended)
 - SSD Storage (256GB+ recommended for models)
-- Small CRT monitor with integrated OLED display
-- I2S microphone array
+- OLED display (I2C/SPI compatible, e.g. Waveshare 1.3")
+- I2S microphone array or USB mic
 - Speakers or headphone output
 
 ## 📦 Quick Start
@@ -31,7 +31,7 @@ cd bmocompano
 chmod +x scripts/install.sh
 ./scripts/install.sh
 
-# Start BMO
+# Start Fresh Buddy
 python -m bmo.main
 ```
 
@@ -51,18 +51,18 @@ bmocompano/
 
 ## 🎨 Expression System
 
-BMO's face changes based on:
+Fresh Buddy's face changes based on:
 - **Speech**: Mouth animation synced with TTS output
 - **Emotion**: Happy, sad, confused, excited, sleeping, listening
 - **Activity**: Recording indicator, processing spinner, thinking dots
 
 ## 📝 Meeting Mode
 
-1. Say "BMO, start meeting" to begin recording
-2. BMO displays red recording indicator
+1. Say "Hey Buddy, start meeting" to begin recording
+2. Fresh Buddy displays red recording indicator
 3. All speech is transcribed in real-time
-4. Say "BMO, end meeting" to stop
-5. BMO generates a structured summary automatically
+4. Say "Hey Buddy, end meeting" to stop
+5. Fresh Buddy generates a structured summary automatically
 
 ## 📄 Documentation
 
