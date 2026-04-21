@@ -1,18 +1,22 @@
 """OLED Display Preview Server — development only.
 
-Interactive dashboard:
-  GET  /             → HTML dev console (full chat)
-  GET  /display.png  → current framebuffer as PNG (auto-refreshed)
-  GET  /events       → SSE stream for real-time expression updates
+Interactive dashboard for the 800×480 BMO face display:
+  GET  /             → HTML dev console (full chat + debug controls)
+  GET  /display.png  → current framebuffer as PNG (?scheme=<name>)
+  GET  /updates      → poll queue for real-time expression/chat updates
+  GET  /settings     → current debug settings as JSON
   POST /expression   → {"name": "happy"} — trigger an expression
   POST /speak        → {"text": "..."} — proxy to TTS, returns audio/wav
   POST /chat         → {"message": "..."} — send chat message, returns response
+  POST /settings     → {"transition_ms":400,"color_scheme":"cyan",...}
+  POST /glitch       → trigger a glitch test effect
 """
 
 import io
 import json
 import logging
 import queue
+import random
 import threading
 import time
 import urllib.request
@@ -20,310 +24,447 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 logger = logging.getLogger(__name__)
 
-_SCALE = 4  # upscale 128×64 → 512×256 for readability
+# ── display dimensions ────────────────────────────────────────────
+W, H = 800, 480   # canvas resolution
+
+# ── color themes ────────────────────────────────────────────────
+_COLOR_SCHEMES = {
+    "green":   (57,  255, 20),   # Matrix neon green  #39FF14
+    "cyan":    (0,   255, 255),  # Cyan               #00FFFF
+    "magenta": (255, 0,   255),  # Magenta            #FF00FF
+    "amber":   (255, 176, 0),    # Amber              #FFB000
+}
+_DEFAULT_SCHEME = "green"
 
 # Shared state — populated by configure() after all components are ready
 _state: dict = {
-    "display": None,
-    "expressions": None,
-    "tts_url": None,
-    "command_queue": queue.Queue(),
-    "chat_callback": None,  # async callback for chat messages (message, callback(response))
+    "display":          None,
+    "expressions":      None,
+    "tts_url":          None,
+    "command_queue":    queue.Queue(),
+    "chat_callback":    None,
+    # ── debug settings ──────────────────────────────────────────
+    "transition_ms":    300,
+    "color_scheme":     _DEFAULT_SCHEME,
+    "speed_multiplier": 1.0,
+    "scanlines":        False,
+    # ── glitch state ────────────────────────────────────────────
+    "glitch_until":     0.0,
 }
 
-# Last response from a simulated command — polled by the browser
 _last_response: dict = {"text": None, "seq": 0}
 
-# SSE clients for real-time updates
 _sse_clients: list = []
 _sse_lock = threading.Lock()
 
-# Polling-based updates (simpler than SSE)
 _update_queue: queue.Queue = queue.Queue()
 _update_seq: int = 0
 
-# Display PNG cache
 _display_png_cache: bytes = None
-_display_png_time: float = 0
-_display_png_ttl: float = 0.5  # seconds
+_display_png_time:  float = 0
+_display_png_ttl:   float = 0.1   # 100 ms — fast enough for 30 fps
 
 _EXPRESSIONS = [
-    "neutral",
-    "happy",
-    "sad",
-    "excited",
-    "confused",
-    "thinking",
-    "listening",
-    "speaking",
-    "recording",
-    "sleeping",
+    "neutral", "happy", "sad", "excited", "confused",
+    "thinking", "listening", "speaking", "recording", "sleeping",
 ]
 
 
 def _build_html() -> str:
-    """Build the dev console HTML with full chat interface."""
+    """Build the dev console HTML with full chat interface and debug controls."""
     expr_buttons = "\n      ".join(
         f'<button class="expr-btn" id="expr-{e}" onclick="sendExpression(\'{e}\')">{e}</button>'
         for e in _EXPRESSIONS
     )
-    w = 128 * _SCALE
-    h = 64 * _SCALE
-
-    return (
-        "<!doctype html>\n"
-        '<html lang="it">\n'
-        "<head>\n"
-        '  <meta charset="utf-8">\n'
-        "  <title>Fresh Buddy \u2014 Dev Console</title>\n"
-        "  <style>\n"
-        "    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n"
-        "    body {\n"
-        "      background: #0a0a0a; color: #ddd;\n"
-        "      font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;\n"
-        "      display: flex; flex-direction: column; align-items: center;\n"
-        "      padding: 16px; gap: 16px;\n"
-        "      min-height: 100vh;\n"
-        "    }\n"
-        "    h1 { color: #fff; font-size: 1rem; letter-spacing: 2px; text-transform: uppercase; }\n"
-        "    h2 { font-size: .7rem; color: #888; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }\n"
-        "    .top-bar { display: flex; gap: 16px; width: 100%; max-width: 900px; align-items: flex-start; }\n"
-        "    #oled-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }\n"
-        "    #fb { image-rendering: pixelated; border: 2px solid #333; border-radius: 4px; }\n"
-        "    #oled-wrap p { color: #444; font-size: 10px; }\n"
-        "    .card {\n"
-        "      background: #141414; border: 1px solid #2a2a2a; border-radius: 8px;\n"
-        "      padding: 12px; flex: 1;\n"
-        "    }\n"
-        "    #chat-container { display: flex; flex-direction: column; height: 320px; }\n"
-        "    #chat-history {\n"
-        "      flex: 1; overflow-y: auto; border: 1px solid #2a2a2a; border-radius: 4px;\n"
-        "      padding: 10px; background: #0d0d0d; display: flex; flex-direction: column; gap: 8px;\n"
-        "    }\n"
-        "    .msg { max-width: 85%; padding: 8px 12px; border-radius: 12px; font-size: 13px; line-height: 1.4; }\n"
-        "    .msg.user { align-self: flex-end; background: #1565c0; color: #fff; border-bottom-right-radius: 2px; }\n"
-        "    .msg.buddy { align-self: flex-start; background: #1a1a1a; border: 1px solid #333; color: #ccc; border-bottom-left-radius: 2px; }\n"
-        "    .msg.buddy.thinking { border-color: #f59e0b; }\n"
-        "    .msg.buddy.speaking { border-color: #22c55e; }\n"
-        "    .msg.buddy .expr-tag { font-size: 10px; color: #888; margin-top: 4px; display: block; }\n"
-        "    #chat-input-row { display: flex; gap: 8px; margin-top: 10px; }\n"
-        "    #chat-input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: #eee; border-radius: 20px; padding: 10px 16px; font-family: inherit; font-size: 13px; }\n"
-        "    #chat-input:focus { outline: none; border-color: #555; }\n"
-        "    #chat-input:disabled { opacity: 0.5; }\n"
-        "    .send-btn { background: #22c55e; border: none; color: #fff; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; }\n"
-        "    .send-btn:hover { background: #16a34a; }\n"
-        "    .send-btn:disabled { background: #333; cursor: not-allowed; }\n"
-        "    .expr-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }\n"
-        "    .expr-btn {\n"
-        "      background: #1a1a1a; border: 1px solid #333; color: #888;\n"
-        "      border-radius: 4px; padding: 5px 3px; font-size: 10px;\n"
-        "      cursor: pointer; text-align: center; transition: all .15s;\n"
-        "    }\n"
-        "    .expr-btn:hover { background: #2e7d32; color: #fff; border-color: #388e3c; }\n"
-        "    .expr-btn.active { background: #1b5e20; color: #a5d6a7; border-color: #2e7d32; }\n"
-        "    .row { display: flex; gap: 8px; margin-top: 8px; }\n"
-        "    input[type=text] {\n"
-        "      flex: 1; background: #1a1a1a; border: 1px solid #333; color: #eee;\n"
-        "      border-radius: 4px; padding: 8px 10px; font-family: inherit; font-size: 12px;\n"
-        "    }\n"
-        "    input[type=text]:focus { outline: none; border-color: #555; }\n"
-        "    .btn {\n"
-        "      background: #1565c0; border: none; color: #fff;\n"
-        "      border-radius: 4px; padding: 8px 14px; font-family: inherit;\n"
-        "      font-size: 11px; cursor: pointer; white-space: nowrap; transition: background .15s;\n"
-        "    }\n"
-        "    .btn:hover { background: #1976d2; }\n"
-        "    .btn.green { background: #2e7d32; }\n"
-        "    .btn.green:hover { background: #388e3c; }\n"
-        "    #status { font-size: 10px; color: #555; min-height: 14px; margin-top: 6px; transition: color .3s; }\n"
-        "    #status.ok  { color: #66bb6a; }\n"
-        "    #status.err { color: #ef5350; }\n"
-        "    .card-mini { background: #141414; border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px; }\n"
-        "    .mini-row { display: flex; gap: 8px; align-items: center; }\n"
-        "  </style>\n"
-        "</head>\n"
-        "<body>\n"
-        "  <h1>Fresh Buddy \u2014 Dev Console</h1>\n"
-        '\n  <div class="top-bar">\n'
-        '\n  <div id="oled-wrap" class="card">\n'
-        "    <h2>Display</h2>\n"
-        f'    <img id="fb" src="/display.png" width="{w}" height="{h}" alt="framebuffer">\n'
-        "    <p>refresh: 100ms</p>\n"
-        '    <div class="expr-grid" style="margin-top:10px;">\n'
-        f"      {expr_buttons}\n"
-        "    </div>\n"
-        "  </div>\n"
-        '\n  <div id="chat-container" class="card">\n'
-        "    <h2>Chat</h2>\n"
-        '    <div id="chat-history"></div>\n'
-        '    <div id="chat-input-row">\n'
-        '      <input id="chat-input" type="text" placeholder="Scrivi un messaggio..." autocomplete="off">\n'
-        '      <button class="send-btn" id="send-btn" onclick="sendChat()">\u27a4</button>\n'
-        "    </div>\n"
-        "  </div>\n"
-        "\n  </div>\n"
-        '\n  <div class="card-mini" style="width:100%;max-width:900px;">\n'
-        '    <div class="mini-row">\n'
-        '      <input id="tts-text" type="text" placeholder="Test TTS..." value="Ciao!">\n'
-        '      <button class="btn green" onclick="sendSpeak()">Parla</button>\n'
-        "    </div>\n"
-        '    <div id="status"></div>\n'
-        "  </div>\n"
-        "\n  <script>\n"
-        "    // --- display refresh (1s interval, expressions via SSE) ---\n"
-        "    setInterval(() => {\n"
-        "      const img = document.getElementById('fb');\n"
-        "      img.src = '/display.png?' + Date.now();\n"
-        "    }, 1000);\n"
-        "\n"
-        "    // --- polling for updates (drains full queue each tick) ---\n"
-        "    function processUpdate(data) {\n"
-        "      if (!data || !data.type) return;\n"
-        "      if (data.type === 'expression') {\n"
-        "        document.querySelectorAll('.expr-btn').forEach(b => b.classList.remove('active'));\n"
-        "        const btn = document.getElementById('expr-' + data.name);\n"
-        "        if (btn) btn.classList.add('active');\n"
-        "      } else if (data.type === 'chat_response') {\n"
-        "        appendMessage('buddy', data.text, data.expression);\n"
-        "        setChatInputEnabled(true);\n"
-        "        autoPlayTTS(data.text);\n"
-        "      } else if (data.type === 'thinking') {\n"
-        "        appendMessage('buddy', data.text, 'thinking');\n"
-        "      }\n"
-        "    }\n"
-        "    async function pollUpdates() {\n"
-        "      try {\n"
-        "        const r = await fetch('/updates');\n"
-        "        if (r.ok) {\n"
-        "          const updates = await r.json();\n"
-        "          for (const data of updates) processUpdate(data);\n"
-        "        }\n"
-        "      } catch(err) {}\n"
-        "    }\n"
-        "    setInterval(pollUpdates, 800);\n"
-        "\n"
-        "    // --- helpers ---\n"
-        "    function setStatus(id, msg, cls) {\n"
-        "      const el = document.getElementById(id);\n"
-        "      if (!el) return;\n"
-        "      el.textContent = msg;\n"
-        "      el.className = cls || '';\n"
-        "    }\n"
-        "\n"
-        "    function setChatInputEnabled(enabled) {\n"
-        "      const inp = document.getElementById('chat-input');\n"
-        "      const btn = document.getElementById('send-btn');\n"
-        "      if (inp) inp.disabled = !enabled;\n"
-        "      if (btn) btn.disabled = !enabled;\n"
-        "    }\n"
-        "\n"
-        "    function appendMessage(role, text, expr) {\n"
-        "      const history = document.getElementById('chat-history');\n"
-        "      if (!history || !text) return;\n"
-        "      const div = document.createElement('div');\n"
-        "      div.className = 'msg ' + role;\n"
-        "      if (expr) div.className += ' ' + expr;\n"
-        "      div.textContent = text;\n"
-        "      if (role === 'buddy' && expr) {\n"
-        "        const tag = document.createElement('span');\n"
-        "        tag.className = 'expr-tag';\n"
-        "        tag.textContent = expr;\n"
-        "        div.appendChild(tag);\n"
-        "      }\n"
-        "      history.appendChild(div);\n"
-        "      history.scrollTop = history.scrollHeight;\n"
-        "    }\n"
-        "\n"
-        "    async function post(url, body) {\n"
-        "      return fetch(url, {\n"
-        "        method: 'POST',\n"
-        "        headers: { 'Content-Type': 'application/json' },\n"
-        "        body: JSON.stringify(body),\n"
-        "      });\n"
-        "    }\n"
-        "\n"
-        "    async function autoPlayTTS(text) {\n"
-        "      if (!text) return;\n"
-        "      try {\n"
-        "        const r = await post('/speak', { text });\n"
-        "        if (r.ok) {\n"
-        "          const blob = await r.blob();\n"
-        "          const url = URL.createObjectURL(blob);\n"
-        "          const audio = new Audio(url);\n"
-        "          audio.play();\n"
-        "          audio.onended = () => URL.revokeObjectURL(url);\n"
-        "        }\n"
-        "      } catch(e) {}\n"
-        "    }\n"
-        "\n"
-        "    // --- expressions ---\n"
-        "    async function sendExpression(name) {\n"
-        "      document.querySelectorAll('.expr-btn').forEach(b => b.classList.remove('active'));\n"
-        "      document.getElementById('expr-' + name).classList.add('active');\n"
-        "      await post('/expression', { name });\n"
-        "    }\n"
-        "\n"
-        "    // --- chat ---\n"
-        "    async function sendChat() {\n"
-        "      const inp = document.getElementById('chat-input');\n"
-        "      const text = inp.value.trim();\n"
-        "      if (!text) return;\n"
-        "      appendMessage('user', text);\n"
-        "      inp.value = '';\n"
-        "      setChatInputEnabled(false);\n"
-        "      try {\n"
-        "        const r = await post('/chat', { message: text });\n"
-        "        if (!r.ok) {\n"
-        "          appendMessage('buddy', 'Errore: ' + r.status, 'neutral');\n"
-        "          setChatInputEnabled(true);\n"
-        "        }\n"
-        "      } catch(e) {\n"
-        "        appendMessage('buddy', 'Errore: ' + e, 'neutral');\n"
-        "        setChatInputEnabled(true);\n"
-        "      }\n"
-        "    }\n"
-        "\n"
-        "    // --- TTS ---\n"
-        "    async function sendSpeak() {\n"
-        "      const text = document.getElementById('tts-text').value.trim();\n"
-        "      if (!text) return;\n"
-        "      setStatus('status', 'Sintesi in corso\u2026', '');\n"
-        "      try {\n"
-        "        const r = await post('/speak', { text });\n"
-        "        if (r.ok) {\n"
-        "          const blob = await r.blob();\n"
-        "          const url = URL.createObjectURL(blob);\n"
-        "          const audio = new Audio(url);\n"
-        "          audio.play();\n"
-        "          audio.onended = () => URL.revokeObjectURL(url);\n"
-        "          setStatus('status', 'Riproduzione in corso', 'ok');\n"
-        "        } else {\n"
-        "          setStatus('status', 'Errore TTS: ' + r.status, 'err');\n"
-        "        }\n"
-        "      } catch(e) { setStatus('status', 'Errore: ' + e, 'err'); }\n"
-        "    }\n"
-        "\n"
-        "    // --- keyboard shortcuts ---\n"
-        "    document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key==='Enter') sendChat(); });\n"
-        "    document.getElementById('tts-text').addEventListener('keydown', e => { if (e.key==='Enter') sendSpeak(); });\n"
-        "  </script>\n"
-        "</body>\n"
-        "</html>\n"
+    scheme_opts = "\n            ".join(
+        f'<option value="{s}">{s.title()}</option>'
+        for s in _COLOR_SCHEMES
     )
 
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fresh Buddy — Dev Console (800×480)</title>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      background: #0a0a0a; color: #ddd;
+      font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 16px; gap: 16px;
+      min-height: 100vh;
+    }}
+    h1 {{ color: #fff; font-size: 1rem; letter-spacing: 2px; text-transform: uppercase; }}
+    h2 {{ font-size: .7rem; color: #888; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }}
+    .top-bar {{ display: flex; gap: 16px; width: 100%; max-width: 960px; align-items: flex-start; flex-wrap: wrap; }}
+    #oled-wrap {{ display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }}
+    #fb-container {{ position: relative; display: inline-block; }}
+    #fb {{ image-rendering: pixelated; border: 2px solid #333; border-radius: 4px; display: block; }}
+    #scanlines {{
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: repeating-linear-gradient(
+        0deg, transparent, transparent 2px, rgba(0,0,0,0.28) 2px, rgba(0,0,0,0.28) 4px
+      );
+      pointer-events: none; border-radius: 4px; display: none;
+    }}
+    #oled-wrap p {{ color: #444; font-size: 10px; }}
+    .fps-badge {{
+      font-size: 10px; color: #22c55e; background: #0d1a0d;
+      border: 1px solid #1b5e20; border-radius: 4px; padding: 2px 6px;
+      font-variant-numeric: tabular-nums;
+    }}
+    .card {{
+      background: #141414; border: 1px solid #2a2a2a; border-radius: 8px;
+      padding: 12px; flex: 1;
+    }}
+    #chat-container {{ display: flex; flex-direction: column; height: 320px; }}
+    #chat-history {{
+      flex: 1; overflow-y: auto; border: 1px solid #2a2a2a; border-radius: 4px;
+      padding: 10px; background: #0d0d0d; display: flex; flex-direction: column; gap: 8px;
+    }}
+    .msg {{ max-width: 85%; padding: 8px 12px; border-radius: 12px; font-size: 13px; line-height: 1.4; }}
+    .msg.user {{ align-self: flex-end; background: #1565c0; color: #fff; border-bottom-right-radius: 2px; }}
+    .msg.buddy {{ align-self: flex-start; background: #1a1a1a; border: 1px solid #333; color: #ccc; border-bottom-left-radius: 2px; }}
+    .msg.buddy.thinking {{ border-color: #f59e0b; }}
+    .msg.buddy.speaking {{ border-color: #22c55e; }}
+    .msg.buddy .expr-tag {{ font-size: 10px; color: #888; margin-top: 4px; display: block; }}
+    #chat-input-row {{ display: flex; gap: 8px; margin-top: 10px; }}
+    #chat-input {{
+      flex: 1; background: #1a1a1a; border: 1px solid #333; color: #eee;
+      border-radius: 20px; padding: 10px 16px; font-family: inherit; font-size: 13px;
+    }}
+    #chat-input:focus {{ outline: none; border-color: #555; }}
+    #chat-input:disabled {{ opacity: 0.5; }}
+    .send-btn {{
+      background: #22c55e; border: none; color: #fff; border-radius: 50%;
+      width: 40px; height: 40px; cursor: pointer; font-size: 18px;
+      display: flex; align-items: center; justify-content: center;
+    }}
+    .send-btn:hover {{ background: #16a34a; }}
+    .send-btn:disabled {{ background: #333; cursor: not-allowed; }}
+    .expr-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }}
+    .expr-btn {{
+      background: #1a1a1a; border: 1px solid #333; color: #888;
+      border-radius: 4px; padding: 5px 3px; font-size: 10px;
+      cursor: pointer; text-align: center; transition: all .15s;
+    }}
+    .expr-btn:hover {{ background: #2e7d32; color: #fff; border-color: #388e3c; }}
+    .expr-btn.active {{ background: #1b5e20; color: #a5d6a7; border-color: #2e7d32; }}
+    .row {{ display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }}
+    input[type=text], input[type=range], select {{
+      background: #1a1a1a; border: 1px solid #333; color: #eee;
+      border-radius: 4px; padding: 8px 10px; font-family: inherit; font-size: 12px;
+    }}
+    input[type=text] {{ flex: 1; }}
+    input[type=text]:focus, select:focus {{ outline: none; border-color: #555; }}
+    input[type=range] {{ cursor: pointer; padding: 4px 6px; }}
+    select {{ cursor: pointer; }}
+    .btn {{
+      background: #1565c0; border: none; color: #fff;
+      border-radius: 4px; padding: 8px 14px; font-family: inherit;
+      font-size: 11px; cursor: pointer; white-space: nowrap; transition: background .15s;
+    }}
+    .btn:hover {{ background: #1976d2; }}
+    .btn.green {{ background: #2e7d32; }}
+    .btn.green:hover {{ background: #388e3c; }}
+    .btn.amber {{ background: #b45309; }}
+    .btn.amber:hover {{ background: #d97706; }}
+    .btn.red {{ background: #b91c1c; }}
+    .btn.red:hover {{ background: #dc2626; }}
+    .btn.toggle {{ background: #333; }}
+    .btn.toggle.on {{ background: #0f766e; border-color: #14b8a6; }}
+    .btn.toggle:hover {{ background: #444; }}
+    .btn.toggle.on:hover {{ background: #0d9488; }}
+    #status {{ font-size: 10px; color: #555; min-height: 14px; margin-top: 6px; transition: color .3s; }}
+    #status.ok  {{ color: #66bb6a; }}
+    #status.err {{ color: #ef5350; }}
+    .card-mini {{ background: #141414; border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px; }}
+    .mini-row {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }}
+    label {{ font-size: 11px; color: #666; white-space: nowrap; }}
+    .slider-val {{ font-size: 11px; color: #aaa; min-width: 42px; text-align: right; }}
+    .debug-section {{ display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #222; }}
+  </style>
+</head>
+<body>
+  <h1>Fresh Buddy — Dev Console (800×480)</h1>
 
-_HTML = _build_html()
+  <div class="top-bar">
+
+    <div id="oled-wrap" class="card">
+      <h2>Display <span class="fps-badge" id="fps-badge">– fps</span></h2>
+      <div id="fb-container">
+        <img id="fb" src="/display.png" width="{W}" height="{H}" alt="framebuffer">
+        <div id="scanlines"></div>
+      </div>
+      <p>auto-refresh</p>
+
+      <div class="expr-grid" style="margin-top:10px;">
+        {expr_buttons}
+      </div>
+
+      <div class="debug-section" style="width:100%;">
+
+        <div class="row">
+          <label>Transition</label>
+          <input type="range" id="transition-slider" min="100" max="1000" step="50" value="300"
+                 oninput="updateSliderLabel('transition-slider','transition-val','ms'); applySettings()">
+          <span class="slider-val" id="transition-val">300ms</span>
+        </div>
+
+        <div class="row">
+          <label>Speed</label>
+          <select id="speed-select" onchange="applySettings()">
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+          </select>
+          <label style="margin-left:8px;">Scheme</label>
+          <select id="scheme-select" onchange="applySettings()">
+            {scheme_opts}
+          </select>
+        </div>
+
+        <div class="row">
+          <button class="btn toggle" id="scanline-btn" onclick="toggleScanlines()">Scanlines</button>
+          <button class="btn red" onclick="triggerGlitch()">⚡ Glitch</button>
+        </div>
+
+      </div>
+    </div>
+
+    <div id="chat-container" class="card">
+      <h2>Chat</h2>
+      <div id="chat-history"></div>
+      <div id="chat-input-row">
+        <input id="chat-input" type="text" placeholder="Send a message..." autocomplete="off">
+        <button class="send-btn" id="send-btn" onclick="sendChat()">➤</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="card-mini" style="width:100%;max-width:960px;">
+    <div class="mini-row">
+      <input id="tts-text" type="text" placeholder="Test TTS..." value="Hello!">
+      <button class="btn green" onclick="sendSpeak()">Speak</button>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    // ── display refresh & FPS counter ──────────────────────────
+    let _frameCount = 0;
+    let _fpsTs = Date.now();
+    let _currentScheme = 'green';
+    let _refreshMs = 100;
+
+    function refreshDisplay() {{
+      const img = document.getElementById('fb');
+      img.onload = () => {{
+        _frameCount++;
+        const now = Date.now();
+        const elapsed = (now - _fpsTs) / 1000;
+        if (elapsed >= 1) {{
+          const fps = (_frameCount / elapsed).toFixed(1);
+          document.getElementById('fps-badge').textContent = fps + ' fps';
+          _frameCount = 0;
+          _fpsTs = now;
+        }}
+      }};
+      img.src = '/display.png?scheme=' + _currentScheme + '&t=' + Date.now();
+    }}
+
+    function startRefreshLoop() {{
+      setInterval(refreshDisplay, _refreshMs);
+    }}
+    startRefreshLoop();
+
+    // ── settings ───────────────────────────────────────────────
+    function updateSliderLabel(sliderId, labelId, suffix) {{
+      const v = document.getElementById(sliderId).value;
+      document.getElementById(labelId).textContent = v + suffix;
+    }}
+
+    async function applySettings() {{
+      const tm  = parseInt(document.getElementById('transition-slider').value);
+      const sp  = parseFloat(document.getElementById('speed-select').value);
+      const sch = document.getElementById('scheme-select').value;
+      _currentScheme = sch;
+      _refreshMs = Math.round(100 / sp);
+      await post('/settings', {{ transition_ms: tm, speed_multiplier: sp, color_scheme: sch }});
+    }}
+
+    function toggleScanlines() {{
+      const btn = document.getElementById('scanline-btn');
+      const sl  = document.getElementById('scanlines');
+      const isOn = btn.classList.contains('on');
+      if (isOn) {{
+        btn.classList.remove('on');
+        sl.style.display = 'none';
+        post('/settings', {{ scanlines: false }});
+      }} else {{
+        btn.classList.add('on');
+        sl.style.display = 'block';
+        post('/settings', {{ scanlines: true }});
+      }}
+    }}
+
+    async function triggerGlitch() {{
+      await post('/glitch', {{}});
+    }}
+
+    // ── polling for updates ─────────────────────────────────────
+    function processUpdate(data) {{
+      if (!data || !data.type) return;
+      if (data.type === 'expression') {{
+        document.querySelectorAll('.expr-btn').forEach(b => b.classList.remove('active'));
+        const btn = document.getElementById('expr-' + data.name);
+        if (btn) btn.classList.add('active');
+      }} else if (data.type === 'chat_response') {{
+        appendMessage('buddy', data.text, data.expression);
+        setChatInputEnabled(true);
+        autoPlayTTS(data.text);
+      }} else if (data.type === 'thinking') {{
+        appendMessage('buddy', data.text, 'thinking');
+      }}
+    }}
+    async function pollUpdates() {{
+      try {{
+        const r = await fetch('/updates');
+        if (r.ok) {{
+          const updates = await r.json();
+          for (const data of updates) processUpdate(data);
+        }}
+      }} catch(err) {{}}
+    }}
+    setInterval(pollUpdates, 800);
+
+    // ── helpers ─────────────────────────────────────────────────
+    function setStatus(id, msg, cls) {{
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = msg;
+      el.className = cls || '';
+    }}
+
+    function setChatInputEnabled(enabled) {{
+      const inp = document.getElementById('chat-input');
+      const btn = document.getElementById('send-btn');
+      if (inp) inp.disabled = !enabled;
+      if (btn) btn.disabled = !enabled;
+    }}
+
+    function appendMessage(role, text, expr) {{
+      const history = document.getElementById('chat-history');
+      if (!history || !text) return;
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      if (expr) div.className += ' ' + expr;
+      div.textContent = text;
+      if (role === 'buddy' && expr) {{
+        const tag = document.createElement('span');
+        tag.className = 'expr-tag';
+        tag.textContent = expr;
+        div.appendChild(tag);
+      }}
+      history.appendChild(div);
+      history.scrollTop = history.scrollHeight;
+    }}
+
+    async function post(url, body) {{
+      return fetch(url, {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify(body),
+      }});
+    }}
+
+    async function autoPlayTTS(text) {{
+      if (!text) return;
+      try {{
+        const r = await post('/speak', {{ text }});
+        if (r.ok) {{
+          const blob = await r.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.play();
+          audio.onended = () => URL.revokeObjectURL(url);
+        }}
+      }} catch(e) {{}}
+    }}
+
+    // ── expressions ─────────────────────────────────────────────
+    async function sendExpression(name) {{
+      document.querySelectorAll('.expr-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById('expr-' + name).classList.add('active');
+      await post('/expression', {{ name }});
+    }}
+
+    // ── chat ─────────────────────────────────────────────────────
+    async function sendChat() {{
+      const inp  = document.getElementById('chat-input');
+      const text = inp.value.trim();
+      if (!text) return;
+      appendMessage('user', text);
+      inp.value = '';
+      setChatInputEnabled(false);
+      try {{
+        const r = await post('/chat', {{ message: text }});
+        if (!r.ok) {{
+          appendMessage('buddy', 'Error: ' + r.status, 'neutral');
+          setChatInputEnabled(true);
+        }}
+      }} catch(e) {{
+        appendMessage('buddy', 'Error: ' + e, 'neutral');
+        setChatInputEnabled(true);
+      }}
+    }}
+
+    // ── TTS ──────────────────────────────────────────────────────
+    async function sendSpeak() {{
+      const text = document.getElementById('tts-text').value.trim();
+      if (!text) return;
+      setStatus('status', 'Synthesising…', '');
+      try {{
+        const r = await post('/speak', {{ text }});
+        if (r.ok) {{
+          const blob = await r.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.play();
+          audio.onended = () => URL.revokeObjectURL(url);
+          setStatus('status', 'Playing…', 'ok');
+        }} else {{
+          setStatus('status', 'TTS error: ' + r.status, 'err');
+        }}
+      }} catch(e) {{ setStatus('status', 'Error: ' + e, 'err'); }}
+    }}
+
+    // ── keyboard shortcuts ───────────────────────────────────────
+    document.getElementById('chat-input').addEventListener('keydown', e => {{ if (e.key==='Enter') sendChat(); }});
+    document.getElementById('tts-text').addEventListener('keydown', e => {{ if (e.key==='Enter') sendSpeak(); }});
+  </script>
+</body>
+</html>
+"""
 
 
-def _framebuffer_to_png(fb: bytearray) -> bytes:
-    """Convert SSD1306 framebuffer (128×64, 1bpp column-major) to PNG bytes.
+_HTML: str = _build_html()
 
-    Renders lit pixels as Matrix green (#39FF14) on a black background.
+
+def _framebuffer_to_png(fb: bytearray, scheme: str = _DEFAULT_SCHEME) -> bytes:
+    """Convert an 800×480 bytearray (row-major, lit-pixel=255) to PNG.
+
+    Reads directly from ``display.get_framebuffer()`` which provides a flat
+    bytearray of the full canvas.  Pixel value > 0 is treated as a lit pixel.
+
+    ``scheme`` selects the colour for lit pixels (green / cyan / magenta / amber).
+    When the glitch effect is active, ~12 % of rows are XORed with a random value.
     """
     try:
         from PIL import Image
     except ImportError:
-        # Fallback: 1×1 black PNG
         return (
             b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
             b"\x00\x00\x00\x01\x08\x00\x00\x00\x00:~\x9bU\x00\x00\x00"
@@ -331,21 +472,34 @@ def _framebuffer_to_png(fb: bytearray) -> bytes:
             b"\x00\x00\x00IEND\xaeB`\x82"
         )
 
-    # Matrix neon green on black
-    GREEN = (57, 255, 20)  # #39FF14
+    color          = _COLOR_SCHEMES.get(scheme, _COLOR_SCHEMES[_DEFAULT_SCHEME])
+    glitch_active  = time.time() < _state["glitch_until"]
 
-    img = Image.new("RGB", (128, 64), (0, 0, 0))
-    pixels = img.load()
+    data = bytearray(fb)
 
-    for x in range(128):
-        for page in range(8):
-            byte = fb[x + page * 128]
-            for bit in range(8):
-                y = page * 8 + bit
-                if (byte >> bit) & 1:
-                    pixels[x, y] = GREEN
+    if glitch_active:
+        for row_idx in range(H):
+            if random.random() < 0.12:
+                xor_val = random.randint(1, 255)
+                row_start = row_idx * W
+                for col_idx in range(W):
+                    data[row_start + col_idx] ^= xor_val
 
-    img = img.resize((128 * _SCALE, 64 * _SCALE), Image.NEAREST)
+    img  = Image.new("L", (W, H), 0)
+    pixs = img.load()
+    for i, val in enumerate(data):
+        if val:
+            pixs[i % W, i // W] = val
+
+    if color != (255, 255, 255):
+        rgb_img = Image.new("RGB", (W, H), (0, 0, 0))
+        for y in range(H):
+            for x in range(W):
+                if pixs[x, y]:
+                    rgb_img.putpixel((x, y), color)
+        img = rgb_img
+    else:
+        img = img.convert("RGB")
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -354,31 +508,51 @@ def _framebuffer_to_png(fb: bytearray) -> bytes:
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        path = self.path.split("?")[0]
+        parts  = self.path.split("?", 1)
+        path   = parts[0]
+        qs     = parts[1] if len(parts) > 1 else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+
         if path in ("/", "/index.html"):
             self._respond(200, "text/html; charset=utf-8", _HTML.encode())
+
         elif path == "/display.png":
             global _display_png_cache, _display_png_time
-            now = time.time()
+            scheme        = params.get("scheme", _state["color_scheme"])
+            now           = time.time()
+            glitch_active = now < _state["glitch_until"]
             if (
                 _display_png_cache is None
                 or (now - _display_png_time) > _display_png_ttl
+                or glitch_active
             ):
                 fb = (
                     _state["display"].get_framebuffer()
                     if _state["display"]
-                    else bytearray(1024)
+                    else bytearray(W * H)
                 )
-                _display_png_cache = _framebuffer_to_png(fb)
-                _display_png_time = now
+                _display_png_cache = _framebuffer_to_png(fb, scheme)
+                _display_png_time   = now
             self._respond(200, "image/png", _display_png_cache)
+
         elif path == "/updates":
             self._handle_poll_updates()
+
+        elif path == "/settings":
+            self._respond(
+                200, "application/json",
+                json.dumps({
+                    "transition_ms":    _state["transition_ms"],
+                    "color_scheme":     _state["color_scheme"],
+                    "speed_multiplier": _state["speed_multiplier"],
+                    "scanlines":        _state["scanlines"],
+                }).encode()
+            )
+
         else:
             self._respond(404, "text/plain", b"not found")
 
     def _handle_poll_updates(self):
-        """Return all pending updates for polling clients."""
         updates = []
         try:
             while True:
@@ -387,40 +561,9 @@ class _Handler(BaseHTTPRequestHandler):
             pass
         self._respond(200, "application/json", json.dumps(updates).encode())
 
-    def _handle_sse(self):
-        """Server-Sent Events for real-time updates."""
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-
-        q = queue.Queue()
-        with _sse_lock:
-            _sse_clients.append(q)
-
-        try:
-            while True:
-                try:
-                    data = q.get(timeout=30)
-                    msg = f"data: {json.dumps(data)}\n\n"
-                    self.wfile.write(msg.encode())
-                    self.wfile.flush()
-                except queue.Empty:
-                    heartbeat = b'data: {"type":"ping"}\n\n'
-                    self.wfile.write(heartbeat)
-                    self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-        finally:
-            with _sse_lock:
-                if q in _sse_clients:
-                    _sse_clients.remove(q)
-
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length)) if length else {}
+        body   = json.loads(self.rfile.read(length)) if length else {}
 
         if self.path == "/expression":
             name = body.get("name", "neutral")
@@ -435,14 +578,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond(200, "application/json", b'{"ok":true}')
 
         elif self.path == "/speak":
-            text = body.get("text", "")
+            text    = body.get("text", "")
             tts_url = _state.get("tts_url")
             if not text or not tts_url:
                 self._respond(503, "text/plain", b"TTS not configured")
                 return
             try:
                 data = json.dumps({"text": text}).encode()
-                req = urllib.request.Request(
+                req  = urllib.request.Request(
                     f"{tts_url.rstrip('/')}/synthesize",
                     data=data,
                     headers={"Content-Type": "application/json"},
@@ -451,7 +594,7 @@ class _Handler(BaseHTTPRequestHandler):
                     wav_bytes = resp.read()
                 self._respond(200, "audio/wav", wav_bytes)
             except Exception as e:
-                logger.warning(f"TTS proxy failed: {e}")
+                logger.warning("TTS proxy failed: %s", e)
                 self._respond(502, "text/plain", str(e).encode())
 
         elif self.path == "/chat":
@@ -461,44 +604,58 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
             _broadcast({"type": "expression", "name": "thinking"})
-            _broadcast({"type": "thinking", "text": "Sto pensando..."})
+            _broadcast({"type": "thinking",   "text": "Thinking…"})
 
             callback = _state.get("chat_callback")
             if callback:
-
                 def respond(response_text: str, expression: str = "neutral"):
-                    _broadcast(
-                        {
-                            "type": "chat_response",
-                            "text": response_text,
-                            "expression": expression,
-                        }
-                    )
+                    _broadcast({
+                        "type":       "chat_response",
+                        "text":       response_text,
+                        "expression": expression,
+                    })
                     _broadcast({"type": "expression", "name": expression})
 
                 def run_callback():
                     try:
                         callback(message, respond)
                     except Exception as e:
-                        logger.error(f"Chat callback error: {e}")
-                        _broadcast(
-                            {
-                                "type": "chat_response",
-                                "text": f"Errore: {e}",
-                                "expression": "confused",
-                            }
-                        )
+                        logger.error("Chat callback error: %s", e)
+                        _broadcast({
+                            "type":       "chat_response",
+                            "text":       f"Error: {e}",
+                            "expression": "confused",
+                        })
 
                 threading.Thread(target=run_callback, daemon=True).start()
             else:
-                _broadcast(
-                    {
-                        "type": "chat_response",
-                        "text": "Chat non disponibile - avvia Fresh Buddy",
-                        "expression": "neutral",
-                    }
-                )
+                _broadcast({
+                    "type":       "chat_response",
+                    "text":       "Chat unavailable — start Fresh Buddy first",
+                    "expression": "neutral",
+                })
             self._respond(200, "application/json", b'{"ok":true}')
+
+        elif self.path == "/settings":
+            allowed = {"transition_ms", "color_scheme", "speed_multiplier", "scanlines"}
+            for key in allowed:
+                if key in body:
+                    val = body[key]
+                    if key == "transition_ms":
+                        val = max(100, min(1000, int(val)))
+                    elif key == "color_scheme":
+                        val = val if val in _COLOR_SCHEMES else _DEFAULT_SCHEME
+                    elif key == "speed_multiplier":
+                        val = float(val)
+                    elif key == "scanlines":
+                        val = bool(val)
+                    _state[key] = val
+            self._respond(200, "application/json", b'{"ok":true}')
+
+        elif self.path == "/glitch":
+            _state["glitch_until"] = time.time() + 1.5
+            _broadcast({"type": "expression", "name": "confused"})
+            self._respond(200, "application/json", b'{"ok":true,"duration_ms":1500}')
 
         else:
             self._respond(404, "text/plain", b"not found")
@@ -515,13 +672,11 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def put_response(text: str):
-    """Store the latest command response so the browser can poll it."""
     _last_response["text"] = text
     _last_response["seq"] += 1
 
 
 def _broadcast(data: dict):
-    """Broadcast data to all SSE clients and update polling queue."""
     global _update_seq
     with _sse_lock:
         for q in list(_sse_clients):
@@ -530,22 +685,19 @@ def _broadcast(data: dict):
             except queue.Full:
                 pass
     try:
-        _update_queue.put_nowait(
-            {
-                "type": data.get("type"),
-                "name": data.get("name"),
-                "text": data.get("text"),
-                "expression": data.get("expression"),
-                "seq": _update_seq,
-            }
-        )
+        _update_queue.put_nowait({
+            "type":       data.get("type"),
+            "name":       data.get("name"),
+            "text":       data.get("text"),
+            "expression": data.get("expression"),
+            "seq":        _update_seq,
+        })
         _update_seq += 1
     except queue.Full:
         pass
 
 
 def configure(expressions=None, tts_url: str = None, chat_callback=None):
-    """Call this after all components are ready to enable interactive endpoints."""
     if expressions is not None:
         _state["expressions"] = expressions
     if tts_url is not None:
@@ -555,17 +707,14 @@ def configure(expressions=None, tts_url: str = None, chat_callback=None):
 
 
 def broadcast_expression(name: str):
-    """Broadcast expression change to all SSE clients."""
     _broadcast({"type": "expression", "name": name})
 
 
 def get_command_queue() -> queue.Queue:
-    """Return the queue that the main loop should drain for simulated commands."""
     return _state["command_queue"]
 
 
 def start_preview_server(display, port: int = 8088):
-    """Start the preview HTTP server in a background daemon thread."""
     _state["display"] = display
     server = HTTPServer(("0.0.0.0", port), _Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)

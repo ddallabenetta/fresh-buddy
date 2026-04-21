@@ -1,7 +1,19 @@
-"""OLED Display Driver for BMO Face"""
+"""BMO Face Display Driver — pygame framebuffer renderer for 800×480 HDMI LCD.
+
+Driver strategy
+───────────────
+  1. Try pygame with the Linux framebuffer (fbcon) → direct /dev/fb0 write,
+     no X11 required — works on Jetson Nano, Raspberry Pi, etc.
+  2. Fall back to pygame dummy driver for dev / CI without hardware.
+  3. Fall back to simulation mode (PNG HTTP server on port 8088).
+
+All drawing goes to a numpy (H×W) back-buffer canvas.  show() copies the
+back-buffer to a pygame Surface and blits it to the screen.
+"""
 
 import logging
-from typing import Optional
+import time
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -12,139 +24,293 @@ except ImportError:
     np = None
     _NUMPY = False
 
+_PYGAME_OK   = False
+_PYGAME_MODE = "unavailable"
+
+try:
+    import pygame as _pg
+    _PYGAME_OK = True
+except Exception as e:
+    logger.debug("pygame not available: %s", e)
+
 
 class OLEDDisplay:
-    """SSD1306 OLED display driver for 128x64 display."""
+    """800×480 BMO face display driven by pygame."""
 
-    WIDTH  = 128
-    HEIGHT = 64
-    BLACK  = 0
-    WHITE  = 1
-    INVERSE = 2
+    WIDTH   = 800
+    HEIGHT  = 480
+    BLACK   = (0,   0,   0)
+    WHITE   = (255, 255, 255)
+    GREEN   = (57,  255, 20)
+    CYAN    = (0,   255, 255)
+    AMBER   = (255, 176, 0)
+    MAGENTA = (255, 0,   255)
+    INVERSE = None
+
+    # ── face geometry ────────────────────────────────────────────
+    BODY_CX, BODY_CY     = 400, 255
+    BODY_RX, BODY_RY     = 195, 210
+    L_EYE_CX, L_EYE_CY  = 270, 185
+    R_EYE_CX, R_EYE_CY  = 530, 185
+    MOUTH_CX, MOUTH_CY   = 400, 330
+
+    _DEFAULT_FPS = 30
 
     def __init__(self, config=None, address: int = 0x3C):
         self.config  = config
         self.address = address
         self._initialized = False
+        self._pygame_ok   = False
+        self._screen      = None
 
-        # Primary buffer: numpy (H×W) pixel canvas when available.
-        # show() converts to SSD1306 column-major bytes at flush time.
         if _NUMPY:
             self._canvas = np.zeros((self.HEIGHT, self.WIDTH), dtype=np.uint8)
         else:
             self._canvas = None
-        # Fallback bytearray in SSD1306 format (used when numpy absent or for I2C send).
-        self._framebuffer = bytearray(self.WIDTH * self.HEIGHT // 8)
+
+        self._framebuffer = bytearray(self.WIDTH * self.HEIGHT)
+
+        self._target_fps     = self._DEFAULT_FPS
+        self._frame_interval = 1.0 / self._DEFAULT_FPS
+        self._last_frame_time = 0.0
+
+        self._layers: Dict[str, "np.ndarray"] = {}
+        self._layer_visibility: Dict[str, bool] = {}
 
         self._init_display()
 
-    # ── canvas access ────────────────────────────────────────────
+    # ── canvas ───────────────────────────────────────────────────
 
     @property
     def canvas(self):
-        """Direct numpy (H×W) canvas; None if numpy unavailable."""
         return self._canvas
 
-    # ── hardware init ────────────────────────────────────────────
+    # ── init ────────────────────────────────────────────────────
 
     def _init_display(self):
-        try:
-            import smbus2
-            bus_number = getattr(self.config, 'i2c_bus', 1)
-            self._bus = smbus2.SMBus(bus_number)
+        global _PYGAME_MODE
 
-            self._send_command(0xAE)        # Display off
-            self._send_command(0xA4)        # Set entire display on
-            self._send_command(0xD3, 0x00)  # Display offset
-            self._send_command(0x40)        # Start line
-            self._send_command(0xA1)        # Segment re-map
-            self._send_command(0xC8)        # COM scan direction
-            self._send_command(0xDA, 0x12)  # COM pins
-            self._send_command(0x81, 0x7F)  # Contrast
-            self._send_command(0xD5, 0x80)  # Clock divide
-            self._send_command(0xD9, 0xF1)  # Pre-charge
-            self._send_command(0xDB, 0x30)  # VCOMH
-            self._send_command(0x8D, 0x14)  # Charge pump
-            self._send_command(0xAF)        # Display on
+        if not _PYGAME_OK:
+            logger.warning("pygame not installed — simulation mode")
+            self._start_simulation()
+            return
 
-            self._initialized = True
-            logger.info("OLED display initialized at 0x%02X", self.address)
+        # Try fbcon first (direct framebuffer, no X11)
+        for driver in ("fbcon", "directfb"):
+            try:
+                import os
+                os.environ.setdefault("SDL_VIDEODRIVER", driver)
+                _pg.init()
+                _pg.mouse.set_visible(False)
+                self._screen = _pg.display.set_mode(
+                    (self.WIDTH, self.HEIGHT), _pg.FULLSCREEN)
+                self._pygame_ok = True
+                _PYGAME_MODE = driver
+                self._initialized = True
+                logger.info("pygame/%s (%dx%d)", driver, self.WIDTH, self.HEIGHT)
+                return
+            except Exception as e:
+                logger.debug("SDL_VIDEODRIVER=%s failed: %s", driver, e)
 
-        except (ImportError, IOError) as e:
-            logger.warning("Display hardware not available: %s", e)
-            logger.info("Running in simulation mode")
-            self._initialized = False
-            self._start_preview_server()
-
-    def _start_preview_server(self):
+        # Try dummy (headless dev/CI)
         try:
             import os
-            port = int(os.environ.get("PREVIEW_PORT", 5000))
+            os.environ["SDL_VIDEODRIVER"] = "dummy"
+            _pg.init()
+            self._screen = _pg.display.set_mode((self.WIDTH, self.HEIGHT))
+            self._pygame_ok = True
+            _PYGAME_MODE = "dummy"
+            self._initialized = True
+            logger.info("pygame/dummy (%dx%d)", self.WIDTH, self.HEIGHT)
+            return
+        except Exception as e:
+            logger.debug("pygame dummy failed: %s", e)
+
+        logger.warning("pygame hardware unavailable — simulation mode")
+        self._start_simulation()
+
+    def _start_simulation(self):
+        try:
+            import os
+            port = int(os.environ.get("PREVIEW_PORT", 8088))
             from bmo.face.preview_server import start_preview_server
             start_preview_server(self, port=port)
+            logger.info("Simulation mode active (http://localhost:%d/)", port)
         except Exception as e:
             logger.debug("Preview server not started: %s", e)
 
-    def _send_command(self, cmd: int, *args: int):
-        if not self._initialized:
-            return
-        try:
-            data = [cmd, *args]
-            self._bus.write_i2c_block_data(self.address, 0x00, data)
-        except IOError as e:
-            logger.error("Failed to send command 0x%02X: %s", cmd, e)
+    # ── animation timing ───────────────────────────────────────────
 
-    def _send_data(self, data: bytes):
-        if not self._initialized:
-            return
-        try:
-            chunk_size = 16
-            for i in range(0, len(data), chunk_size):
-                chunk = list(data[i:i + chunk_size])
-                self._bus.write_i2c_block_data(self.address, 0x40, chunk)
-        except IOError as e:
-            logger.error("Failed to send data: %s", e)
+    def set_animation_fps(self, target_fps: int) -> None:
+        target_fps = max(1, min(120, int(target_fps)))
+        self._target_fps     = target_fps
+        self._frame_interval = 1.0 / target_fps
+        logger.debug("Animation FPS → %d", target_fps)
 
-    # ── public drawing API ───────────────────────────────────────
+    def get_animation_fps(self) -> int:
+        return self._target_fps
+
+    def wait_for_next_frame(self) -> float:
+        now     = time.monotonic()
+        elapsed = now - self._last_frame_time
+        sleep_s = self._frame_interval - elapsed
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+        self._last_frame_time = time.monotonic()
+        return time.monotonic() - now
+
+    def flip(self) -> None:
+        self.show()
+
+    # ── colour helpers ───────────────────────────────────────────
+
+    def _to_canvas(self, color):
+        """Normalise any colour → uint8 canvas value (0=black, >0=lit)."""
+        if isinstance(color, tuple):
+            r, g, b = color
+            return int(0.299 * r + 0.587 * g + 0.114 * b)
+        if color is None:
+            return 0
+        return max(0, min(255, int(color)))
+
+    def _to_rgb(self, color):
+        """Normalise any colour → (R, G, B) pygame tuple."""
+        if isinstance(color, tuple):
+            return color
+        if color is None:
+            return (0, 0, 0)
+        v = max(0, min(255, int(color)))
+        return (v, v, v)
+
+    # ── drawing API ───────────────────────────────────────────────
 
     def clear(self):
         if _NUMPY and self._canvas is not None:
             self._canvas[:] = 0
-        else:
-            for i in range(len(self._framebuffer)):
-                self._framebuffer[i] = 0
+        for i in range(len(self._framebuffer)):
+            self._framebuffer[i] = 0
 
-    def set_pixel(self, x: int, y: int, color: int = WHITE):
+    def set_pixel(self, x: int, y: int, color=WHITE):
         if not (0 <= x < self.WIDTH and 0 <= y < self.HEIGHT):
             return
+        c = self._to_canvas(color)
         if _NUMPY and self._canvas is not None:
-            self._canvas[y, x] = 1 if color != self.BLACK else 0
+            self._canvas[y, x] = c
         else:
-            index = x + (y // 8) * self.WIDTH
-            mask  = 1 << (y % 8)
-            if color == self.WHITE:
-                self._framebuffer[index] |= mask
-            elif color == self.BLACK:
-                self._framebuffer[index] &= ~mask
-            else:
-                self._framebuffer[index] ^= mask
+            self._framebuffer[y * self.WIDTH + x] = c
 
     def draw_rect(self, x: int, y: int, width: int, height: int,
-                  color: int = WHITE, fill: bool = False):
+                  color=WHITE, fill: bool = False):
+        c = self._to_canvas(color)
         if fill:
             for dy in range(height):
                 for dx in range(width):
-                    self.set_pixel(x + dx, y + dy, color)
+                    self.set_pixel(x + dx, y + dy, c)
         else:
             for dx in range(width):
-                self.set_pixel(x + dx, y, color)
-                self.set_pixel(x + dx, y + height - 1, color)
+                self.set_pixel(x + dx, y,              c)
+                self.set_pixel(x + dx, y + height - 1, c)
             for dy in range(height):
-                self.set_pixel(x, y + dy, color)
-                self.set_pixel(x + width - 1, y + dy, color)
+                self.set_pixel(x,          y + dy, c)
+                self.set_pixel(x + width - 1, y + dy, c)
 
-    def draw_text(self, x: int, y: int, text: str, color: int = WHITE):
-        """Draw text using a minimal 5×7 bitmap font."""
+    def draw_glow_rect(self, x: int, y: int, w: int, h: int,
+                       color=WHITE, intensity: int = 6) -> None:
+        intensity = max(1, min(12, int(intensity)))
+        c = self._to_canvas(color)
+        self.draw_rect(x, y, w, h, c, fill=True)
+        for ring in range(1, intensity + 1):
+            rx, ry, rw, rh = x - ring, y - ring, w + ring * 2, h + ring * 2
+            step = 1 + (ring - 1) // 2
+            for dx in range(0, rw, step):
+                self.set_pixel(rx + dx, ry,          c)
+                self.set_pixel(rx + dx, ry + rh - 1, c)
+            for dy in range(0, rh, step):
+                self.set_pixel(rx,          ry + dy, c)
+                self.set_pixel(rx + rw - 1, ry + dy, c)
+
+    def draw_ellipse(self, cx: int, cy: int, rx: int, ry: int,
+                     color=WHITE, fill: bool = True):
+        import math
+        c = self._to_canvas(color)
+        if fill:
+            for dy in range(-ry, ry + 1):
+                y = cy + dy
+                if not (0 <= y < self.HEIGHT):
+                    continue
+                w = int(rx * math.sqrt(max(0.0, 1.0 - (dy / ry) ** 2))) if ry else 0
+                x0, x1 = max(0, cx - w), min(self.WIDTH, cx + w + 1)
+                if _NUMPY and self._canvas is not None:
+                    self._canvas[y, x0:x1] = c
+                else:
+                    for x in range(x0, x1):
+                        self._framebuffer[y * self.WIDTH + x] = c
+        else:
+            for angle in range(0, 360, 2):
+                rad = math.radians(angle)
+                self.set_pixel(
+                    int(cx + rx * math.cos(rad)),
+                    int(cy + ry * math.sin(rad)), c)
+
+    def draw_circle(self, cx: int, cy: int, r: int, color=WHITE, fill: bool = False):
+        self.draw_ellipse(cx, cy, r, r, color=self._to_canvas(color), fill=fill)
+
+    def draw_line(self, x1: int, y1: int, x2: int, y2: int, color=WHITE, width: int = 1):
+        import math
+        c = self._to_canvas(color)
+        dx, dy = abs(x2 - x1), abs(y2 - y1)
+        steps = max(1, dx if dx >= dy else dy)
+        xs = np.round(np.linspace(x1, x2, steps)).astype(int)
+        ys = np.round(np.linspace(y1, y2, steps)).astype(int)
+        for x, y in zip(xs, ys):
+            for w in range(width):
+                self.set_pixel(x, y - width // 2 + w, c)
+
+    def draw_polygon(self, points, color=WHITE, fill: bool = False):
+        c = self._to_canvas(color)
+        if fill:
+            xmin = min(p[0] for p in points)
+            xmax = max(p[0] for p in points)
+            ymin = min(p[1] for p in points)
+            ymax = max(p[1] for p in points)
+            for y in range(ymin, ymax + 1):
+                for x in range(xmin, xmax + 1):
+                    if self._point_in_polygon(x, y, points):
+                        self.set_pixel(x, y, c)
+        else:
+            for i in range(-1, len(points) - 1):
+                self.draw_line(points[i][0], points[i][1],
+                               points[i + 1][0], points[i + 1][1], c)
+
+    def _point_in_polygon(self, x: int, y: int, points) -> bool:
+        n = len(points)
+        inside = False
+        p1x, p1y = points[0]
+        for i in range(1, n + 1):
+            p2x, p2y = points[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
+
+    def draw_text(self, x: int, y: int, text: str, color=WHITE, font_size: int = 20):
+        if not _PYGAME_OK:
+            self._draw_text_numpy(x, y, text, color)
+            return
+        import pygame
+        c = self._to_rgb(color)
+        font = pygame.font.Font(pygame.font.get_default_font(), font_size)
+        for i, line in enumerate(text.split("\n")):
+            surf = font.render(line, False, c)
+            self._screen.blit(surf, (x, y + i * (font_size + 4)))
+
+    def _draw_text_numpy(self, x: int, y: int, text: str, color=WHITE):
+        scale = 2
         font = {
             'A': [0x7C,0x12,0x11,0x12,0x7C], 'B': [0x7F,0x49,0x49,0x49,0x36],
             'C': [0x3E,0x41,0x41,0x41,0x22], 'D': [0x7F,0x41,0x41,0x22,0x1C],
@@ -165,57 +331,88 @@ class OLEDDisplay:
             '6': [0x3C,0x4A,0x49,0x49,0x30], '7': [0x01,0x71,0x09,0x05,0x03],
             '8': [0x36,0x49,0x49,0x49,0x36], '9': [0x06,0x49,0x49,0x29,0x1E],
             ' ': [0x00,0x00,0x00,0x00,0x00], ':': [0x00,0x36,0x36,0x00,0x00],
+            '.': [0x00,0x00,0x00,0x00,0x40], '!': [0x00,0x00,0x7F,0x00,0x00],
+            '?': [0x42,0x01,0x7F,0x01,0x40],
         }
-        cursor_x = x
+        c = self._to_canvas(color)
+        cx = x
         for char in text.upper():
-            if char in font:
-                for col, byte in enumerate(font[char]):
-                    for row in range(8):
-                        if byte & (1 << row):
-                            self.set_pixel(cursor_x + col, y + row, color)
-                cursor_x += 6
+            if char not in font:
+                cx += 6 * scale
+                continue
+            for col, byte in enumerate(font[char]):
+                for row in range(8):
+                    if byte & (1 << row):
+                        for sy in range(scale):
+                            for sx in range(scale):
+                                px = cx + col * scale + sx
+                                py = y + row * scale + sy
+                                if 0 <= px < self.WIDTH and 0 <= py < self.HEIGHT:
+                                    self.set_pixel(px, py, c)
+            cx += 6 * scale
+
+    def draw_sprite(self, image_path: str, x: int = 0, y: int = 0):
+        if not _PYGAME_OK:
+            return
+        import pygame
+        try:
+            sprite = pygame.image.load(image_path)
+            self._screen.blit(sprite, (x, y))
+        except Exception as e:
+            logger.warning("Could not load sprite %s: %s", image_path, e)
+
+    # ── main flush ───────────────────────────────────────────────
 
     def show(self):
-        """Convert canvas to SSD1306 format and flush to hardware (or simulation)."""
-        if _NUMPY and self._canvas is not None:
-            fb_bytes = self._canvas_to_ssd1306()
-        else:
-            fb_bytes = bytes(self._framebuffer)
-
         if not self._initialized:
-            logger.debug("Display update (simulation)")
             return
 
-        self._send_command(0x22)
-        self._send_command(0x00)
-        self._send_command(0x07)
-        self._send_command(0x21)
-        self._send_command(0x00)
-        self._send_command(0x7F)
-        self._send_data(fb_bytes)
+        if _PYGAME_OK and self._screen is not None:
+            import pygame
+            import pygame.surfarray as surfarray
+            rgb = np.zeros((self.HEIGHT, self.WIDTH, 3), dtype=np.uint8)
+            lit = self._canvas > 0
+            rgb[lit] = (255, 255, 255)
+            surf = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
+            self._screen.fill((0, 0, 0))
+            self._screen.blit(surf, (0, 0))
+            pygame.display.flip()
+        else:
+            logger.debug("Display update (simulation)")
 
-    # ── internal conversion ──────────────────────────────────────
+    # ── layer system ─────────────────────────────────────────────
 
-    def _canvas_to_ssd1306(self) -> bytes:
-        """Vectorized (H×W) numpy canvas → SSD1306 column-major bytes.
+    def get_layer(self, name: str) -> Optional["np.ndarray"]:
+        if not _NUMPY:
+            raise RuntimeError("Layer support requires numpy")
+        if name not in self._layers:
+            self._layers[name] = np.zeros((self.HEIGHT, self.WIDTH), dtype=np.uint8)
+            self._layer_visibility[name] = True
+        return self._layers[name]
 
-        Layout: byte at index col + page*128 encodes 8 vertical pixels of
-        column `col` in page `page`, LSB = topmost row of the page.
-        """
-        # Reshape (64, 128) → (8_pages, 8_bits, 128_cols)
-        p  = self._canvas.reshape(8, 8, self.WIDTH)
-        fb = np.zeros((8, self.WIDTH), dtype=np.uint8)
-        for bit in range(8):
-            fb |= (p[:, bit, :] << bit)
-        return bytes(fb.flatten())
+    def set_layer_visibility(self, layer_name: str, visible: bool) -> None:
+        self._layer_visibility[layer_name] = bool(visible)
 
-    # ── debug / preview ──────────────────────────────────────────
+    def composite_layers(self, dest=None) -> Optional["np.ndarray"]:
+        if not _NUMPY:
+            raise RuntimeError("Layer compositing requires numpy")
+        if dest is None:
+            dest = self._canvas
+        dest[:] = 0
+        for name, layer in self._layers.items():
+            if self._layer_visibility.get(name, True):
+                dest |= layer
+        return dest
+
+    # ── debug / preview ─────────────────────────────────────────
 
     def get_framebuffer(self) -> bytearray:
-        """Return current frame as SSD1306 bytes (used by preview server)."""
         if _NUMPY and self._canvas is not None:
-            return bytearray(self._canvas_to_ssd1306())
-        return self._framebuffer or bytearray(1024)
+            return bytearray(self._canvas.tobytes())
+        return self._framebuffer or bytearray(self.WIDTH * self.HEIGHT)
 
     def is_available(self) -> bool:
         return self._initialized
+
+    def pygame_mode(self) -> str:
+        return _PYGAME_MODE

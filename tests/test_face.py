@@ -22,8 +22,8 @@ class TestOLEDDisplay(unittest.TestCase):
     def test_display_initialization(self):
         """Test display initializes without error."""
         self.assertIsNotNone(self.display)
-        self.assertEqual(self.display.WIDTH, 128)
-        self.assertEqual(self.display.HEIGHT, 64)
+        self.assertEqual(self.display.WIDTH, 800)
+        self.assertEqual(self.display.HEIGHT, 480)
 
     def test_clear(self):
         """Test display clear."""
@@ -84,7 +84,7 @@ class TestOLEDDisplay(unittest.TestCase):
 
     def test_framebuffer_size(self):
         """Test framebuffer has correct size."""
-        expected_size = 128 * 64 // 8  # 1024 bytes
+        expected_size = 800 * 480  # 384 000 bytes
         self.assertEqual(len(self.display.get_framebuffer()), expected_size)
 
 
