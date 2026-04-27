@@ -47,7 +47,8 @@ _state: dict = {
     "transition_ms":    300,
     "color_scheme":     _DEFAULT_SCHEME,
     "speed_multiplier": 1.0,
-    "scanlines":        False,
+    "scanlines":        True,
+    "glow":             True,
     # ── glitch state ────────────────────────────────────────────
     "glitch_until":     0.0,
 }
@@ -226,7 +227,8 @@ def _build_html() -> str:
         </div>
 
         <div class="row">
-          <button class="btn toggle" id="scanline-btn" onclick="toggleScanlines()">Scanlines</button>
+          <button class="btn toggle on" id="scanline-btn" onclick="toggleScanlines()">Scanlines</button>
+          <button class="btn toggle on" id="glow-btn" onclick="toggleGlow()">Glow</button>
           <button class="btn red" onclick="triggerGlitch()">⚡ Glitch</button>
         </div>
 
@@ -307,6 +309,18 @@ def _build_html() -> str:
         btn.classList.add('on');
         sl.style.display = 'block';
         post('/settings', {{ scanlines: true }});
+      }}
+    }}
+
+    function toggleGlow() {{
+      const btn = document.getElementById('glow-btn');
+      const isOn = btn.classList.contains('on');
+      if (isOn) {{
+        btn.classList.remove('on');
+        post('/settings', {{ glow: false }});
+      }} else {{
+        btn.classList.add('on');
+        post('/settings', {{ glow: true }});
       }}
     }}
 
@@ -475,7 +489,8 @@ def _framebuffer_to_png(fb: bytearray, scheme: str = _DEFAULT_SCHEME) -> bytes:
     color          = _COLOR_SCHEMES.get(scheme, _COLOR_SCHEMES[_DEFAULT_SCHEME])
     glitch_active  = time.time() < _state["glitch_until"]
 
-    data = bytearray(fb)
+    data = bytearray(W * H)
+    data[:min(len(fb), W * H)] = fb[:min(len(fb), W * H)]
 
     if glitch_active:
         for row_idx in range(H):
@@ -485,19 +500,25 @@ def _framebuffer_to_png(fb: bytearray, scheme: str = _DEFAULT_SCHEME) -> bytes:
                 for col_idx in range(W):
                     data[row_start + col_idx] ^= xor_val
 
-    img  = Image.new("L", (W, H), 0)
-    pixs = img.load()
-    for i, val in enumerate(data):
-        if val:
-            pixs[i % W, i // W] = val
+    img = Image.frombytes("L", (W, H), bytes(data))
 
     if color != (255, 255, 255):
-        rgb_img = Image.new("RGB", (W, H), (0, 0, 0))
-        for y in range(H):
-            for x in range(W):
-                if pixs[x, y]:
-                    rgb_img.putpixel((x, y), color)
-        img = rgb_img
+        try:
+            import numpy as np
+            lum = np.frombuffer(bytes(data), dtype=np.uint8).reshape(H, W)
+            rgb = np.zeros((H, W, 3), dtype=np.uint8)
+            for idx, channel in enumerate(color):
+                rgb[:, :, idx] = (lum.astype(np.uint16) * channel // 255).astype(np.uint8)
+            img = Image.fromarray(rgb, "RGB")
+        except Exception:
+            rgb_img = Image.new("RGB", (W, H), (0, 0, 0))
+            pixs = img.load()
+            for y in range(H):
+                for x in range(W):
+                    val = pixs[x, y]
+                    if val:
+                        rgb_img.putpixel((x, y), tuple(int(c * val / 255) for c in color))
+            img = rgb_img
     else:
         img = img.convert("RGB")
 
@@ -546,6 +567,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "color_scheme":     _state["color_scheme"],
                     "speed_multiplier": _state["speed_multiplier"],
                     "scanlines":        _state["scanlines"],
+                    "glow":             _state["glow"],
                 }).encode()
             )
 
@@ -637,7 +659,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond(200, "application/json", b'{"ok":true}')
 
         elif self.path == "/settings":
-            allowed = {"transition_ms", "color_scheme", "speed_multiplier", "scanlines"}
+            allowed = {"transition_ms", "color_scheme", "speed_multiplier", "scanlines", "glow"}
             for key in allowed:
                 if key in body:
                     val = body[key]
@@ -649,7 +671,17 @@ class _Handler(BaseHTTPRequestHandler):
                         val = float(val)
                     elif key == "scanlines":
                         val = bool(val)
+                    elif key == "glow":
+                        val = bool(val)
                     _state[key] = val
+            expressions = _state.get("expressions")
+            if expressions and hasattr(expressions, "set_render_options"):
+                expressions.set_render_options(
+                    transition_ms=_state["transition_ms"],
+                    speed_multiplier=_state["speed_multiplier"],
+                    scanlines=_state["scanlines"],
+                    glow=_state["glow"],
+                )
             self._respond(200, "application/json", b'{"ok":true}')
 
         elif self.path == "/glitch":
@@ -700,6 +732,13 @@ def _broadcast(data: dict):
 def configure(expressions=None, tts_url: str = None, chat_callback=None):
     if expressions is not None:
         _state["expressions"] = expressions
+        if hasattr(expressions, "set_render_options"):
+            expressions.set_render_options(
+                transition_ms=_state["transition_ms"],
+                speed_multiplier=_state["speed_multiplier"],
+                scanlines=_state["scanlines"],
+                glow=_state["glow"],
+            )
     if tts_url is not None:
         _state["tts_url"] = tts_url
     if chat_callback is not None:

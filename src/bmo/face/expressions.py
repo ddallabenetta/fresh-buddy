@@ -218,6 +218,10 @@ class ExpressionEngine:
 
         # Animation controller
         self._anim = AnimationController()
+        self._transition_duration_ms = 300.0
+        self._speed_multiplier = 1.0
+        self._scanlines_enabled = True
+        self._glow_enabled = True
 
         self._prerender_all()
 
@@ -234,6 +238,24 @@ class ExpressionEngine:
             logger.warning("Unknown expression: %s", name)
             expr = Expression.NEUTRAL
         self._switch(expr)
+
+    def set_render_options(
+        self,
+        *,
+        transition_ms: float = None,
+        speed_multiplier: float = None,
+        scanlines: bool = None,
+        glow: bool = None,
+    ):
+        """Update live visual tuning knobs used by the preview console."""
+        if transition_ms is not None:
+            self._transition_duration_ms = max(100.0, min(1000.0, float(transition_ms)))
+        if speed_multiplier is not None:
+            self._speed_multiplier = max(0.25, min(3.0, float(speed_multiplier)))
+        if scanlines is not None:
+            self._scanlines_enabled = bool(scanlines)
+        if glow is not None:
+            self._glow_enabled = bool(glow)
 
     def animate_speaking(self, duration: float = 0.1):
         np.copyto(self._buf, self._base[self.current])
@@ -257,20 +279,38 @@ class ExpressionEngine:
     def _get_fy(self) -> int:
         return int(FLOAT_AMP * math.sin(time.time() * FLOAT_FREQ))
 
+    def _wait(self, seconds: float) -> bool:
+        return self._stop.wait(seconds / self._speed_multiplier)
+
     # ── commit ─────────────────────────────────────────────────
 
     def _commit(self, fy: int = 0):
+        frame = self._post_process_frame(self._buf)
         dc = self.display.canvas
-        if dc is not None:
+        if isinstance(dc, np.ndarray):
             if fy == 0:
-                np.copyto(dc, self._buf)
+                np.copyto(dc, frame)
             elif fy > 0:
                 dc[:] = BL
-                dc[fy:, :] = self._buf[:-fy, :]
+                dc[fy:, :] = frame[:-fy, :]
             else:
                 dc[:] = BL
-                dc[:fy, :] = self._buf[-fy:, :]
+                dc[:fy, :] = frame[-fy:, :]
         self.display.show()
+
+    def _post_process_frame(self, source: np.ndarray) -> np.ndarray:
+        """Apply CRT post-processing without mutating the working buffer."""
+        frame = source.copy()
+        if self._glow_enabled:
+            self._apply_glow(frame)
+        if self._scanlines_enabled:
+            self._apply_scanlines(frame)
+        return frame
+
+    def _apply_scanlines(self, canvas: np.ndarray = None):
+        """Darken animated rows for the CRT scanline layer."""
+        target = self._buf if canvas is None else canvas
+        self._anim.apply_scanlines(target)
 
     # ── effects overlay ────────────────────────────────────────
 
@@ -286,8 +326,98 @@ class ExpressionEngine:
         elif expr == Expression.CONFUSED: self._effect_confused_wobble(t)
         elif expr == Expression.THINKING: self._effect_thinking_processing(t)
 
+        self._overlay_facial_animation(t)
+
         # Always apply CRT corners
         self._apply_crt_corners()
+
+    def _overlay_facial_animation(self, t: float):
+        """Add high-frequency facial life while preserving the 80s robot style."""
+        expr = self.current
+        if expr not in (Expression.HAPPY, Expression.SLEEPING):
+            self._draw_pupil_radar(t, expr)
+            self._draw_lid_sweep(t, expr)
+
+        if expr in (Expression.NEUTRAL, Expression.HAPPY, Expression.EXCITED):
+            self._draw_cheek_leds(t, expr)
+
+        if expr in (Expression.SPEAKING, Expression.LISTENING, Expression.EXCITED):
+            self._draw_mouth_equalizer(t, expr)
+
+        if expr == Expression.RECORDING:
+            self._draw_eye_scan_beam(t)
+
+    def _draw_pupil_radar(self, t: float, expr: Expression):
+        """Animated glints and reticles inside each pupil."""
+        if expr == Expression.THINKING:
+            x_shift = 20
+        elif expr == Expression.CONFUSED:
+            x_shift = int(10 * math.sin(t * 5.0))
+        else:
+            x_shift = int(14 * math.sin(t * 1.7))
+        y_shift = int(8 * math.sin(t * 1.3 + 0.8))
+
+        for idx, (cx, cy) in enumerate((L_EYE, R_EYE)):
+            px = cx + x_shift + (idx * 4 - 2)
+            py = cy + y_shift
+            self._ellipse_outline(px, py, max(6, PUPIL_R // 2), max(5, PUPIL_R // 3), G)
+            self._thick_line(px - 18, py, px + 18, py, G, thick=1)
+            self._thick_line(px, py - 12, px, py + 12, G, thick=1)
+            glint_x = px + int(10 * math.cos(t * 2.4 + idx))
+            glint_y = py - 14 + int(5 * math.sin(t * 3.1 + idx))
+            self._fill_ellipse(glint_x, glint_y, 5, 5, G)
+
+    def _draw_lid_sweep(self, t: float, expr: Expression):
+        """Subtle eyelid shutter sweep, like an analog robotic aperture."""
+        blink = 0.5 + 0.5 * math.sin(t * 2.2)
+        if expr == Expression.SAD:
+            blink = min(1.0, blink + 0.25)
+        lid_h = int(5 + blink * 12)
+        for cx, cy in (L_EYE, R_EYE):
+            x0 = max(0, cx - EYE_RX + 8)
+            x1 = min(W, cx + EYE_RX - 8)
+            top = max(0, cy - EYE_RY)
+            bottom = min(H, cy + EYE_RY)
+            self._buf[top:top + lid_h, x0:x1] = BL
+            self._buf[max(top, bottom - lid_h):bottom, x0:x1] = BL
+            self._hline(x0, top + lid_h, x1, G)
+            self._hline(x0, max(top, bottom - lid_h), x1, G)
+
+    def _draw_cheek_leds(self, t: float, expr: Expression):
+        """Blinking cheek LEDs for a more expressive robot face."""
+        base_y = MOUTH_Y - 30
+        intensity_phase = int(t * (7.0 if expr == Expression.EXCITED else 3.0))
+        for side, x0 in [(-1, MOUTH_X - 150), (1, MOUTH_X + 150)]:
+            for dot in range(4):
+                if (dot + intensity_phase) % 4 == 0 and expr == Expression.NEUTRAL:
+                    continue
+                x = x0 + side * dot * 18
+                y = base_y + int(5 * math.sin(t * 2.5 + dot))
+                self._fill_ellipse(x, y, 6, 6, G)
+
+    def _draw_mouth_equalizer(self, t: float, expr: Expression):
+        """Voice-reactive bar graph inside the mouth area."""
+        bars = 9 if expr == Expression.SPEAKING else 7
+        spacing = 14
+        start_x = MOUTH_X - (bars - 1) * spacing // 2
+        baseline = MOUTH_Y + 48
+        speed = 10.0 if expr == Expression.SPEAKING else 5.0
+        for i in range(bars):
+            phase = t * speed + i * 0.8
+            height = int(10 + 28 * (0.5 + 0.5 * math.sin(phase)))
+            x = start_x + i * spacing
+            self._buf[max(0, baseline - height):baseline, max(0, x - 3):min(W, x + 4)] = G
+
+    def _draw_eye_scan_beam(self, t: float):
+        """Horizontal scanner beam across alert recording eyes."""
+        beam_y = int(L_EYE[1] - EYE_RY + 20 + (math.sin(t * 5.0) + 1.0) * (EYE_RY - 20))
+        for cx, _cy in (L_EYE, R_EYE):
+            x0 = max(0, cx - EYE_RX + 10)
+            x1 = min(W, cx + EYE_RX - 10)
+            for dy in range(-2, 3):
+                y = beam_y + dy
+                if 0 <= y < H:
+                    self._buf[y, x0:x1] = G
 
     # ── per-expression effects ─────────────────────────────────
 
@@ -415,11 +545,15 @@ class ExpressionEngine:
 
     # ── glow / bloom ───────────────────────────────────────────
 
-    def _apply_glow(self, color: int = G):
+    def _apply_glow(self, canvas: np.ndarray = None, color: int = G):
         """Bloom effect: dilate and OR back for glow halo."""
-        dilated = self._dilate(self._buf, color)
-        self._buf = np.clip(self._buf.astype(np.int16) + (dilated > 0).astype(np.int16) * color // 2,
-                            0, 255).astype(np.uint8)
+        target = self._buf if canvas is None else canvas
+        dilated = self._dilate(target, color)
+        target[:] = np.clip(
+            target.astype(np.int16) + (dilated > 0).astype(np.int16) * color // 2,
+            0,
+            255,
+        ).astype(np.uint8)
 
     def _dilate(self, arr: np.ndarray, color: int) -> np.ndarray:
         """Dilate lit pixels by 2px radius."""
@@ -441,7 +575,7 @@ class ExpressionEngine:
         self._stop.clear()
 
         prev = self.current
-        self._anim.begin_transition(prev, expr, duration_ms=300.0)
+        self._anim.begin_transition(prev, expr, duration_ms=self._transition_duration_ms)
 
         # Immediately commit target frame (API responsiveness)
         self.current = expr
@@ -457,14 +591,14 @@ class ExpressionEngine:
         # Blink-out (70ms)
         np.copyto(self._buf, self._blink[from_expr])
         self._commit(0)
-        if self._stop.wait(0.07):
+        if self._wait(0.07):
             return
 
         # Blend-in (300ms)
         from_base = self._base[from_expr]
         to_base   = self._base[to_expr]
         blend_start = time.time()
-        duration = 0.30
+        duration = self._transition_duration_ms / 1000.0
 
         while not self._stop.is_set():
             elapsed = time.time() - blend_start
@@ -479,7 +613,8 @@ class ExpressionEngine:
 
             if t_raw >= 1.0:
                 break
-            time.sleep(self._anim._FRAME_MS / 1000.0)
+            if self._wait(self._anim._FRAME_MS / 1000.0):
+                return
 
         self._anim.finalize_transition()
 
@@ -605,6 +740,17 @@ class ExpressionEngine:
             w = int(rx * math.sqrt(max(0.0, 1.0 - (dy / ry) ** 2)))
             x0, x1 = max(0, cx - w), min(W, cx + w + 1)
             self._buf[y, x0:x1] = color
+
+    def _ellipse_outline(self, cx: int, cy: int, rx: int, ry: int, color: int = G):
+        """Draw a thin ellipse outline for eye reticles and scan effects."""
+        if rx <= 0 or ry <= 0:
+            return
+        for deg in range(0, 360, 4):
+            rad = math.radians(deg)
+            x = int(cx + rx * math.cos(rad))
+            y = int(cy + ry * math.sin(rad))
+            if 0 <= x < W and 0 <= y < H:
+                self._buf[y, x] = color
 
     def _eye_normal(self, cx: int, cy: int):
         self._fill_ellipse(cx, cy, EYE_RX, EYE_RY, G)
@@ -791,24 +937,24 @@ class ExpressionEngine:
     # ── animation loops ───────────────────────────────────────
 
     def _loop_blink(self, expr: Expression):
-        while not self._stop.wait(random.uniform(1.5, 3.5)):
+        while not self._wait(random.uniform(1.5, 3.5)):
             if not self._anim.frame_throttle():
                 continue
             np.copyto(self._buf, self._blink[expr])
             self._overlay_effects()
             self._commit(0)
-            if self._stop.wait(0.10):
+            if self._wait(0.10):
                 break
             np.copyto(self._buf, self._base[expr])
             self._overlay_effects()
             self._commit(self._get_fy())
             if random.random() < 0.25:
-                if self._stop.wait(0.12):
+                if self._wait(0.12):
                     break
                 np.copyto(self._buf, self._blink[expr])
                 self._overlay_effects()
                 self._commit(0)
-                if self._stop.wait(0.10):
+                if self._wait(0.10):
                     break
                 np.copyto(self._buf, self._base[expr])
                 self._overlay_effects()
@@ -819,7 +965,7 @@ class ExpressionEngine:
         sleep_base = self._base[Expression.SLEEPING]
         while not self._stop.is_set():
             if not self._anim.frame_throttle():
-                self._stop.wait(0.005)
+                self._wait(0.005)
                 continue
             fy = self._get_fy()
             breath = int(3 * math.sin(time.time() * 0.7 * math.pi))
@@ -835,7 +981,7 @@ class ExpressionEngine:
             self._commit(fy + breath)
             z_off = (z_off + 2.5) % 60
             self._anim.advance_scanlines(self._anim._FRAME_MS)
-            if self._stop.wait(0.6):
+            if self._wait(0.6):
                 break
 
     def _loop_speaking(self):
@@ -854,7 +1000,7 @@ class ExpressionEngine:
             self._commit(fy)
             self._anim.advance_scanlines(self._anim._FRAME_MS)
             i += 1
-            if self._stop.wait(0.09):
+            if self._wait(0.09):
                 break
 
     def _loop_thinking(self):
@@ -873,7 +1019,7 @@ class ExpressionEngine:
             self._commit(fy)
             self._anim.advance_scanlines(330.0)
             dot = (dot + 1) % 3
-            if self._stop.wait(0.33):
+            if self._wait(0.33):
                 break
 
     def _loop_excited(self):
@@ -881,7 +1027,7 @@ class ExpressionEngine:
         bounce_t = 0.0
         while not self._stop.is_set():
             if not self._anim.frame_throttle():
-                self._stop.wait(0.005)
+                self._wait(0.005)
                 continue
             bounce = int(12 * abs(math.sin(bounce_t * 2.5)))
             np.copyto(self._buf, excited_base)
@@ -889,7 +1035,7 @@ class ExpressionEngine:
             self._commit(self._get_fy() + bounce)
             bounce_t += 0.1
             self._anim.advance_scanlines(self._anim._FRAME_MS)
-            if self._stop.wait(0.1):
+            if self._wait(0.1):
                 break
 
     def _loop_happy(self):
@@ -897,7 +1043,7 @@ class ExpressionEngine:
         bounce_t = 0.0
         while not self._stop.is_set():
             if not self._anim.frame_throttle():
-                self._stop.wait(0.005)
+                self._wait(0.005)
                 continue
             bounce = int(4 * abs(math.sin(bounce_t * 1.5)))
             np.copyto(self._buf, happy_base)
@@ -905,14 +1051,14 @@ class ExpressionEngine:
             self._commit(self._get_fy() + bounce)
             bounce_t += 0.06
             self._anim.advance_scanlines(self._anim._FRAME_MS)
-            if self._stop.wait(0.15):
+            if self._wait(0.15):
                 break
 
     def _loop_recording(self):
         rec_base = self._base[Expression.RECORDING]
         while not self._stop.is_set():
             if not self._anim.frame_throttle():
-                self._stop.wait(0.005)
+                self._wait(0.005)
                 continue
             fy = self._get_fy()
             if random.random() < 0.05:
@@ -923,19 +1069,19 @@ class ExpressionEngine:
             self._overlay_effects()
             self._commit(fy)
             self._anim.advance_scanlines(self._anim._FRAME_MS)
-            if self._stop.wait(0.12):
+            if self._wait(0.12):
                 break
 
     def _loop_listening(self):
         listen_base = self._base[Expression.LISTENING]
         while not self._stop.is_set():
             if not self._anim.frame_throttle():
-                self._stop.wait(0.005)
+                self._wait(0.005)
                 continue
             fy = self._get_fy()
             np.copyto(self._buf, listen_base)
             self._overlay_effects()
             self._commit(fy)
             self._anim.advance_scanlines(self._anim._FRAME_MS)
-            if self._stop.wait(0.18):
+            if self._wait(0.18):
                 break

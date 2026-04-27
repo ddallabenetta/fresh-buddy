@@ -84,6 +84,17 @@ Fresh Buddy's face changes based on:
 - **Speech**: Mouth animation synced with TTS output
 - **Emotion**: Happy, sad, confused, excited, sleeping, listening
 - **Activity**: Recording indicator, processing spinner, thinking dots
+- **80s Robot Animation**: CRT scanlines, glow bloom, pupil radar reticles, eyelid sweeps, cheek LEDs, voice equalizer bars, recording scan beams
+
+### Development Preview
+
+Run the app in simulation mode to open the 800×480 dev console:
+
+```bash
+PYTHONPATH=src PREVIEW_PORT=8088 python3 -c "from bmo.face.display import OLEDDisplay; from bmo.face.expressions import ExpressionEngine; from bmo.face.preview_server import configure; import time; d=OLEDDisplay(); e=ExpressionEngine(d); configure(expressions=e); e.show_expression('neutral'); time.sleep(3600)"
+```
+
+Then open `http://localhost:8088/`. The console includes expression buttons, theme selector, transition speed, animation speed, scanline toggle, glow toggle, and glitch trigger.
 
 ## 📝 Meeting Mode
 

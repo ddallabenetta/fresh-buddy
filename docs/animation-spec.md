@@ -39,21 +39,21 @@ Transform Fresh Buddy's face into a stunning 80s sci-fi movie aesthetic — thin
 ### Per-Expression Animations
 
 #### NEUTRAL
-- Gentle idle breathing: subtle scale pulse (1.0 → 1.02 → 1.0) over 3s
-- Eyes: soft glow pulse (brightness oscillates 80%-100%)
-- Mouth: minimal smile with slight shimmer
+- Gentle idle breathing: subtle vertical float over time
+- Eyes: animated pupil radar reticles, glints, eyelid shutter sweep
+- Mouth: minimal smile with CRT post-processing shimmer
 
 #### HAPPY
 - Eyes: sparkle effect (small bright dots orbit)
 - Mouth: wide smile with corner accents
 - Body: slight bounce animation
-- Cheek indicators (small light dots)
+- Cheek indicators (small blinking LED dots)
 
 #### EXCITED
 - Eyes: starburst effect, rapid color shift cyan↔magenta
 - Mouth: open smile with tongue hint
 - Body: energetic bounce, faster pulse
-- Particle effects: small dots emanating outward
+- Particle effects: starburst rays plus mouth equalizer bars
 
 #### SAD
 - Eyes: droopy, tears animation (vertical streaks)
@@ -71,11 +71,12 @@ Transform Fresh Buddy's face into a stunning 80s sci-fi movie aesthetic — thin
 - Eyes: attentive, iris follows subtle "movement"
 - Mouth: small "o" shape
 - Ear indicator: sound wave rings emanating
+- Face overlay: pupil radar and mouth equalizer bars
 
 #### SPEAKING
 - Mouth: smooth open/close synced to speech
-- Jaw movement: realistic vertical motion
-- Eyes: slight blink suppression, focused look
+- Jaw movement: animated phase cycle with equalizer bars
+- Eyes: slight blink suppression, focused pupil radar
 - Tongue visible for "th" and "l" sounds (optional)
 
 #### THINKING
@@ -96,10 +97,11 @@ Transform Fresh Buddy's face into a stunning 80s sci-fi movie aesthetic — thin
 - Eyes: alert, scanning motion
 - Body: slight shake/vibration effect
 - Text: "REC" flashing
+- Face overlay: horizontal eye scan beam
 
 ### Idle Animations
 - Scanline overlay (horizontal lines scrolling slowly)
-- Screen glow breathing
+- Glow/bloom post-processing around lit edges
 - Occasional glitch effect (1-2 per minute, very subtle)
 
 ### Transition Effects
@@ -172,27 +174,28 @@ def ease_out_bounce(t):      # Bounce effect for excited states
 
 ## Preview Server Enhancements
 
-- [ ] Real-time expression preview with auto-refresh
-- [ ] Expression transition smoothness visualization
-- [ ] Color scheme switcher (green/cyan/magenta themes)
-- [ ] Animation speed slider
-- [ ] Frame rate display
-- [ ] Scanline toggle
+- [x] Real-time expression preview with auto-refresh
+- [x] Expression transition smoothness visualization
+- [x] Color scheme switcher (green/cyan/magenta/amber themes)
+- [x] Animation speed slider
+- [x] Frame rate display
+- [x] Scanline toggle
+- [x] Glow toggle
 
 ---
 
 ## Deliverables Checklist
 
-- [ ] Updated expressions.py with 80s visual style (800×480 native)
-- [ ] Smooth transition system between expressions
-- [ ] Easing function library
-- [ ] Animation timing controller
-- [ ] Scanline overlay effect (1px every 3px)
-- [ ] Glow/bloom effect on edges (3-pass bloom)
-- [ ] Enhanced preview_server with debug controls
-- [ ] HDMI display driver (framebuffer-based, not I2C)
-- [ ] Unit tests for animation system
-- [ ] Documentation: Animation System API
+- [x] Updated expressions.py with 80s visual style (800×480 native)
+- [x] Smooth transition system between expressions
+- [x] Easing function library
+- [x] Animation timing controller
+- [x] Scanline overlay effect (1px every 3px)
+- [x] Glow/bloom effect on edges
+- [x] Enhanced preview_server with debug controls
+- [x] HDMI display driver (framebuffer-based, not I2C)
+- [x] Unit tests for animation system
+- [x] Documentation: Animation System API
 
 ## Hardware Notes
 

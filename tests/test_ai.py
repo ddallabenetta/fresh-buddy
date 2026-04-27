@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from bmo.ai.llm_client import LLMClient
 from bmo.ai.meeting import MeetingAssistant
+from bmo.audio.stt import ParakeetSTT
+from bmo.audio.tts import PiperTTS
 
 
 class TestLLMClient(unittest.TestCase):

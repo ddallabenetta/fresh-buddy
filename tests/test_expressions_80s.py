@@ -1,16 +1,22 @@
 """Tests for 80s expression rendering — visual characteristics, animations, and effects."""
 
-import threading
-import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from bmo.face.display import OLEDDisplay
-from bmo.face.expressions import ExpressionEngine, Expression
+from bmo.face.expressions import (
+    EYE_RY,
+    L_EYE,
+    MOUTH_X,
+    MOUTH_Y,
+    R_EYE,
+    ExpressionEngine,
+    Expression,
+)
 
 
 # ── All 10 expressions render without error ─────────────────────────────────
@@ -55,7 +61,7 @@ class TestAllExpressionsRender(unittest.TestCase):
         for expr in [Expression.NEUTRAL, Expression.HAPPY, Expression.SAD,
                      Expression.EXCITED, Expression.SLEEPING]:
             buf = self.engine._base[expr]
-            eye_region = buf[:30, :]
+            eye_region = buf[L_EYE[1] - EYE_RY - 40:R_EYE[1] + EYE_RY + 40, :]
             eye_pixels[expr] = eye_region.sum()
 
         neutral_pixels = eye_pixels[Expression.NEUTRAL]
@@ -68,28 +74,18 @@ class TestAllExpressionsRender(unittest.TestCase):
 # ── Scanline effect ─────────────────────────────────────────────────────────
 
 class TestScanlineEffect(unittest.TestCase):
-    """Tests for scanline overlay effect.
-
-    The 80s spec calls for animated horizontal scanlines scrolling over the
-    face. These tests verify scanline-related functionality or document
-    the current absence of scanline rendering so it can be added.
-    """
+    """Tests for scanline overlay effect."""
 
     def setUp(self):
         self.display = OLEDDisplay()
 
-    def test_no_scanline_method_defined(self):
-        """Document that _apply_scanlines does not exist yet.
-
-        When scanlines are implemented, add a test like:
-          engine._apply_scanlines(engine._buf)
-          # verify alternating rows are dimmed
-        """
+    def test_scanline_method_dims_rows(self):
+        """Scanlines dim every third row without clearing the frame."""
         engine = ExpressionEngine(self.display)
-        self.assertFalse(
-            hasattr(engine, "_apply_scanlines"),
-            "_apply_scanlines should not exist until implemented",
-        )
+        engine._buf[:] = 200
+        engine._apply_scanlines(engine._buf)
+        self.assertGreater(engine._buf.sum(), 0)
+        self.assertLess(engine._buf.sum(), 200 * engine._buf.size)
 
     def test_render_pipeline_has_hook_for_post_processing(self):
         """The _commit method is the right place to apply scanline overlay."""
@@ -101,7 +97,7 @@ class TestScanlineEffect(unittest.TestCase):
         engine = ExpressionEngine(self.display)
         buf = engine._base[Expression.NEUTRAL]
         total = buf.size
-        lit = buf.sum()
+        lit = int((buf > 0).sum())
         self.assertGreater(lit, 0)
         self.assertLess(lit, total)
 
@@ -109,27 +105,20 @@ class TestScanlineEffect(unittest.TestCase):
 # ── Glow effect ─────────────────────────────────────────────────────────────
 
 class TestGlowEffect(unittest.TestCase):
-    """Tests for edge glow/bloom effect on the face outline.
-
-    The 80s spec calls for glowing edges. These tests document the
-    current state and verify there is a clear path to adding glow.
-    """
+    """Tests for edge glow/bloom effect on the face outline."""
 
     def setUp(self):
         self.display = OLEDDisplay()
 
-    def test_no_glow_method_defined(self):
-        """Document that _apply_glow does not exist yet.
-
-        When glow is implemented, test that:
-          engine._apply_glow(engine._buf, color=(57, 255, 20))
-          # verifies bloom pixels around bright edges
-        """
+    def test_glow_method_expands_lit_pixels(self):
+        """Glow should add bloom around a sparse lit pixel."""
         engine = ExpressionEngine(self.display)
-        self.assertFalse(
-            hasattr(engine, "_apply_glow"),
-            "_apply_glow should not exist until implemented",
-        )
+        engine._buf[:] = 0
+        engine._buf[100, 100] = 255
+        before = int((engine._buf > 0).sum())
+        engine._apply_glow(engine._buf)
+        after = int((engine._buf > 0).sum())
+        self.assertGreater(after, before)
 
     def test_body_outline_can_be_drawn(self):
         """Display.draw_rect can draw the body outline (foundation for glow)."""
@@ -161,16 +150,20 @@ class TestExpressionVisualCharacteristics(unittest.TestCase):
         """Sad eyes are offset downward and use smaller ellipse."""
         buf = self.engine._base[Expression.SAD]
         neutral_buf = self.engine._base[Expression.NEUTRAL]
-        sad_upper = buf[:25, :].sum()
-        neutral_upper = neutral_buf[:25, :].sum()
+        eye_top = L_EYE[1] - EYE_RY - 40
+        sad_upper = buf[eye_top:L_EYE[1], :].sum()
+        neutral_upper = neutral_buf[eye_top:L_EYE[1], :].sum()
         self.assertNotEqual(sad_upper, neutral_upper)
 
     def test_excited_eyes_are_larger(self):
         """Excited eyes use _eye_big which has larger radius."""
         buf = self.engine._base[Expression.EXCITED]
         neutral_buf = self.engine._base[Expression.NEUTRAL]
+        eye_top = L_EYE[1] - EYE_RY - 40
+        eye_bottom = L_EYE[1] + EYE_RY + 40
         self.assertGreater(
-            buf[:30, :].sum(), neutral_buf[:30, :].sum(),
+            buf[eye_top:eye_bottom, :].sum(),
+            neutral_buf[eye_top:eye_bottom, :].sum(),
             "EXCITED should have more lit pixels in eye region than NEUTRAL",
         )
 
@@ -253,7 +246,7 @@ class TestSpeakingAnimation(unittest.TestCase):
     def test_speaking_base_has_mouth_area(self):
         """Speaking base canvas must have mouth region lit."""
         buf = self.engine._base[Expression.SPEAKING]
-        mouth_region = buf[38:55, :]
+        mouth_region = buf[MOUTH_Y - 30:MOUTH_Y + 90, :]
         self.assertGreater(mouth_region.sum(), 0)
 
     def test_speaking_has_multiple_mouth_phases(self):
@@ -285,11 +278,54 @@ class TestSpeakingAnimation(unittest.TestCase):
     def test_speak_mouths_are_eyes_free(self):
         """Speaking mouth canvases should only affect mouth area, not eye area."""
         for phase, buf in self.engine._speak_mouths.items():
-            eye_region = buf[:30, :]
+            eye_region = buf[:MOUTH_Y - 40, :]
             self.assertEqual(
                 eye_region.sum(), 0,
                 f"Phase '{phase}' should not draw in eye region",
             )
+
+
+# ── Facial micro-animations ─────────────────────────────────────────────────
+
+class TestFacialMicroAnimations(unittest.TestCase):
+    """Test expressive overlays: pupil radar, eyelids, LEDs, and mouth EQ."""
+
+    def setUp(self):
+        self.display = OLEDDisplay()
+        self.engine = ExpressionEngine(self.display)
+
+    def test_pupil_radar_changes_over_time(self):
+        """Dynamic pupil reticles should render different pixels over time."""
+        frames = []
+        for t in (0.0, 0.8):
+            self.engine.current = Expression.NEUTRAL
+            self.engine._buf[:] = self.engine._base[Expression.NEUTRAL]
+            self.engine._overlay_facial_animation(t)
+            frames.append(self.engine._buf.copy())
+        self.assertFalse((frames[0] == frames[1]).all())
+
+    def test_speaking_equalizer_affects_mouth_area_only(self):
+        """Speaking overlay should add animated bars in the mouth band."""
+        self.engine.current = Expression.SPEAKING
+        self.engine._buf[:] = self.engine._base[Expression.SPEAKING]
+        before = self.engine._buf.copy()
+        self.engine._overlay_facial_animation(0.25)
+        mouth_before = before[MOUTH_Y:MOUTH_Y + 70, MOUTH_X - 90:MOUTH_X + 90]
+        mouth_after = self.engine._buf[MOUTH_Y:MOUTH_Y + 70, MOUTH_X - 90:MOUTH_X + 90]
+        self.assertGreater(mouth_after.sum(), mouth_before.sum())
+
+    def test_render_options_are_clamped(self):
+        """Preview tuning should clamp unsafe values."""
+        self.engine.set_render_options(
+            transition_ms=5000,
+            speed_multiplier=99,
+            scanlines=False,
+            glow=False,
+        )
+        self.assertEqual(self.engine._transition_duration_ms, 1000.0)
+        self.assertEqual(self.engine._speed_multiplier, 3.0)
+        self.assertFalse(self.engine._scanlines_enabled)
+        self.assertFalse(self.engine._glow_enabled)
 
 
 # ── SLEEPING Z animation ────────────────────────────────────────────────────

@@ -1,19 +1,16 @@
 """Tests for preview server HTTP endpoints and PNG rendering."""
 
-import io
 import json
-import threading
 import unittest
 from http.client import HTTPConnection
 from http.server import HTTPServer
-from unittest.mock import patch, MagicMock, Mock
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from bmo.face.display import OLEDDisplay
-from bmo.face.expressions import ExpressionEngine, Expression
+from bmo.face.expressions import ExpressionEngine
 from bmo.face import preview_server
 
 
@@ -74,6 +71,8 @@ class TestStateConfiguration(unittest.TestCase):
         engine = ExpressionEngine(display)
         preview_server.configure(expressions=engine)
         self.assertIs(preview_server._state["expressions"], engine)
+        self.assertTrue(engine._scanlines_enabled)
+        self.assertTrue(engine._glow_enabled)
 
     def test_configure_accepts_tts_url(self):
         """configure() must store the TTS URL string."""
@@ -92,6 +91,22 @@ class TestStateConfiguration(unittest.TestCase):
         engine = ExpressionEngine(display)
         preview_server.configure(expressions=engine)
         preview_server.configure(expressions=engine)  # should not raise
+
+    def test_configure_applies_visual_settings(self):
+        """Preview state should initialize ExpressionEngine render options."""
+        display = OLEDDisplay()
+        engine = ExpressionEngine(display)
+        old_scanlines = preview_server._state["scanlines"]
+        old_glow = preview_server._state["glow"]
+        try:
+            preview_server._state["scanlines"] = False
+            preview_server._state["glow"] = False
+            preview_server.configure(expressions=engine)
+            self.assertFalse(engine._scanlines_enabled)
+            self.assertFalse(engine._glow_enabled)
+        finally:
+            preview_server._state["scanlines"] = old_scanlines
+            preview_server._state["glow"] = old_glow
 
 
 class TestBroadcastMechanism(unittest.TestCase):

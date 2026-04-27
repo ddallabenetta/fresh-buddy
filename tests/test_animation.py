@@ -247,6 +247,7 @@ class TestDoubleBuffering(unittest.TestCase):
     def test_commit_copies_to_display_canvas(self):
         """_commit must copy working buffer to display canvas."""
         engine = ExpressionEngine(self.display)
+        engine.set_render_options(scanlines=False, glow=False)
         engine._buf[:] = 0
         engine._buf[30, 60] = 1
 

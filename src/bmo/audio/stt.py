@@ -12,6 +12,11 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
+
 
 class ParakeetSTT:
     """Speech-to-text client backed by the STT microservice."""
@@ -27,9 +32,10 @@ class ParakeetSTT:
 
     def _check_audio(self) -> bool:
         """Probe for a usable input device."""
+        if pyaudio is None:
+            logger.warning("PyAudio not installed — STT running in silent mode")
+            return False
         try:
-            import pyaudio
-
             p = pyaudio.PyAudio()
             count = p.get_device_count()
             p.terminate()
@@ -37,9 +43,6 @@ class ParakeetSTT:
                 logger.warning("No audio devices found — STT running in silent mode")
                 return False
             return True
-        except ImportError:
-            logger.warning("PyAudio not installed — STT running in silent mode")
-            return False
         except Exception as e:
             logger.warning(f"Audio not available ({e}) — STT running in silent mode")
             return False
@@ -55,8 +58,6 @@ class ParakeetSTT:
             return None
 
         try:
-            import pyaudio
-
             p = pyaudio.PyAudio()
             stream = p.open(
                 format=pyaudio.paInt16,

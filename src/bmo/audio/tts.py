@@ -1,6 +1,7 @@
 """TTS client — sends text to the TTS microservice over HTTP."""
 
 import logging
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,11 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
+
 
 class PiperTTS:
     """Text-to-speech client backed by the TTS microservice."""
@@ -16,12 +22,18 @@ class PiperTTS:
     def __init__(self, config=None):
         self.config = config
         self._base_url = getattr(config, "tts_endpoint", "http://tts:5002").rstrip("/")
+        self.voice = getattr(config, "piper_voice", "en_US-lessac-medium")
+        self._speaker_id = getattr(config, "piper_speaker", None)
+        self._noise_scale = getattr(config, "piper_noise_scale", 0.667)
+        self._length_scale = getattr(config, "piper_length_scale", 1.0)
         self._audio_available: bool = self._check_audio()
 
     def _check_audio(self) -> bool:
         """Probe for a usable output device."""
+        if pyaudio is None:
+            logger.warning("PyAudio not installed — TTS playback disabled")
+            return False
         try:
-            import pyaudio
             p = pyaudio.PyAudio()
             count = p.get_device_count()
             p.terminate()
@@ -29,9 +41,6 @@ class PiperTTS:
                 logger.warning("No audio devices found — TTS playback disabled")
                 return False
             return True
-        except ImportError:
-            logger.warning("PyAudio not installed — TTS playback disabled")
-            return False
         except Exception as e:
             logger.warning(f"Audio not available ({e}) — TTS playback disabled")
             return False
@@ -71,7 +80,6 @@ class PiperTTS:
             return
 
         try:
-            import pyaudio
             import wave
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -111,9 +119,11 @@ class PiperTTS:
             logger.info(f"Audio saved to {output_path}")
 
     def set_voice(self, voice: str):
+        self.voice = voice
         logger.info(f"Voice change to '{voice}' requires TTS service restart")
 
     def set_speaker(self, speaker_id: int):
+        self._speaker_id = speaker_id
         logger.info("Speaker change requires TTS service restart")
 
     def cleanup(self):

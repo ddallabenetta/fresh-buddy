@@ -53,7 +53,7 @@ Fresh Buddy: (legge il riepilogo ad alta voce)
 
 ## Espressioni del Display
 
-Fresh Buddy mostra diverse espressioni:
+Fresh Buddy mostra diverse espressioni con stile robot futuristico anni 80: glow CRT, scanline, reticoli pupilla, sweep palpebre, LED sulle guance e barre equalizer quando parla o ascolta.
 
 | Espressione | Quando |
 |-------------|--------|
@@ -65,6 +65,16 @@ Fresh Buddy mostra diverse espressioni:
 | 😴 Addormentato | Stato idle/inattivo |
 | 🔴 Registrazione | Meeting in registrazione |
 | 👂 Ascolto | Modalità ascolto attivo |
+
+## Dev Console
+
+Per provare l'interfaccia in browser durante lo sviluppo:
+
+```bash
+PYTHONPATH=src PREVIEW_PORT=8088 python3 -c "from bmo.face.display import OLEDDisplay; from bmo.face.expressions import ExpressionEngine; from bmo.face.preview_server import configure; import time; d=OLEDDisplay(); e=ExpressionEngine(d); configure(expressions=e); e.show_expression('neutral'); time.sleep(3600)"
+```
+
+Apri `http://localhost:8088/`. Puoi testare tutte le espressioni, cambiare schema colore, regolare transizione e velocità, attivare/disattivare scanline e glow, e lanciare il glitch test.
 
 ## Meeting
 
