@@ -12,6 +12,8 @@ back-buffer to a pygame Surface and blits it to the screen.
 """
 
 import logging
+import mmap
+import os
 import time
 from typing import Dict, Optional
 
@@ -62,6 +64,11 @@ class OLEDDisplay:
         self._initialized = False
         self._pygame_ok   = False
         self._screen      = None
+        self._fb_map = None
+        self._fb_virtual_width = 0
+        self._fb_virtual_height = 0
+        self._fb_stride = 0
+        self._fb_bpp = 0
 
         if _NUMPY:
             self._canvas = np.zeros((self.HEIGHT, self.WIDTH), dtype=np.uint8)
@@ -96,10 +103,11 @@ class OLEDDisplay:
             return
 
         # Try fbcon first (direct framebuffer, no X11)
-        for driver in ("fbcon", "directfb"):
+        for driver in ("fbcon", "kmsdrm", "directfb"):
             try:
-                import os
-                os.environ.setdefault("SDL_VIDEODRIVER", driver)
+                if os.path.exists("/dev/fb0"):
+                    os.environ["SDL_FBDEV"] = "/dev/fb0"
+                os.environ["SDL_VIDEODRIVER"] = driver
                 _pg.init()
                 _pg.mouse.set_visible(False)
                 self._screen = _pg.display.set_mode(
@@ -110,11 +118,23 @@ class OLEDDisplay:
                 logger.info("pygame/%s (%dx%d)", driver, self.WIDTH, self.HEIGHT)
                 return
             except Exception as e:
+                _pg.quit()
                 logger.debug("SDL_VIDEODRIVER=%s failed: %s", driver, e)
+
+        if self._init_framebuffer():
+            _PYGAME_MODE = "framebuffer"
+            self._initialized = True
+            logger.info(
+                "direct framebuffer (%dx%d -> %dx%d)",
+                self.WIDTH,
+                self.HEIGHT,
+                self._fb_virtual_width,
+                self._fb_virtual_height,
+            )
+            return
 
         # Try dummy (headless dev/CI)
         try:
-            import os
             os.environ["SDL_VIDEODRIVER"] = "dummy"
             _pg.init()
             self._screen = _pg.display.set_mode((self.WIDTH, self.HEIGHT))
@@ -128,6 +148,39 @@ class OLEDDisplay:
 
         logger.warning("pygame hardware unavailable — simulation mode")
         self._start_simulation()
+
+    def _init_framebuffer(self) -> bool:
+        fb_path = "/dev/fb0"
+        try:
+            if not os.path.exists(fb_path):
+                return False
+
+            with open("/sys/class/graphics/fb0/virtual_size", "r", encoding="utf-8") as f:
+                virt_w, virt_h = [int(v) for v in f.read().strip().split(",")]
+            with open("/sys/class/graphics/fb0/bits_per_pixel", "r", encoding="utf-8") as f:
+                bits_per_pixel = int(f.read().strip())
+            with open("/sys/class/graphics/fb0/stride", "r", encoding="utf-8") as f:
+                stride = int(f.read().strip())
+
+            if bits_per_pixel != 32:
+                logger.warning("Unsupported framebuffer format: %s bpp", bits_per_pixel)
+                return False
+
+            fb_size = stride * virt_h
+            fb_fd = os.open(fb_path, os.O_RDWR)
+            self._fb_map = mmap.mmap(fb_fd, fb_size, mmap.MAP_SHARED, mmap.PROT_WRITE)
+            os.close(fb_fd)
+            self._fb_virtual_width = virt_w
+            self._fb_virtual_height = virt_h
+            self._fb_stride = stride
+            self._fb_bpp = bits_per_pixel
+            return True
+        except Exception as e:
+            logger.debug("Direct framebuffer init failed: %s", e)
+            if self._fb_map is not None:
+                self._fb_map.close()
+                self._fb_map = None
+            return False
 
     def _start_simulation(self):
         try:
@@ -299,7 +352,7 @@ class OLEDDisplay:
         return inside
 
     def draw_text(self, x: int, y: int, text: str, color=WHITE, font_size: int = 20):
-        if not _PYGAME_OK:
+        if not _PYGAME_OK or self._screen is None:
             self._draw_text_numpy(x, y, text, color)
             return
         import pygame
@@ -352,7 +405,7 @@ class OLEDDisplay:
             cx += 6 * scale
 
     def draw_sprite(self, image_path: str, x: int = 0, y: int = 0):
-        if not _PYGAME_OK:
+        if not _PYGAME_OK or self._screen is None:
             return
         import pygame
         try:
@@ -377,6 +430,22 @@ class OLEDDisplay:
             self._screen.fill((0, 0, 0))
             self._screen.blit(surf, (0, 0))
             pygame.display.flip()
+        elif self._fb_map is not None and _NUMPY and self._canvas is not None:
+            frame = np.zeros(
+                (self._fb_virtual_height, self._fb_virtual_width, 4), dtype=np.uint8
+            )
+            x_off = max(0, (self._fb_virtual_width - self.WIDTH) // 2)
+            y_off = max(0, (self._fb_virtual_height - self.HEIGHT) // 2)
+            crop_w = min(self.WIDTH, self._fb_virtual_width)
+            crop_h = min(self.HEIGHT, self._fb_virtual_height)
+            gray = self._canvas[:crop_h, :crop_w]
+            region = frame[y_off:y_off + crop_h, x_off:x_off + crop_w]
+            region[..., 0] = gray
+            region[..., 1] = gray
+            region[..., 2] = gray
+            region[..., 3] = 255
+            self._fb_map.seek(0)
+            self._fb_map.write(frame.tobytes())
         else:
             logger.debug("Display update (simulation)")
 

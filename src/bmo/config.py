@@ -17,7 +17,9 @@ class Config:
     # Hardware settings
     i2c_bus: int = 1
     display_address: int = 0x3C
-    audio_device: int = 0
+    audio_device: Optional[Any] = None
+    audio_input_device: Optional[Any] = None
+    audio_output_device: Optional[Any] = None
 
     # Model paths (for local STT/TTS)
     parakeet_model_path: Optional[str] = None
@@ -89,6 +91,9 @@ class Config:
             "TTS_ENDPOINT": "tts_endpoint",
             "PARAKEET_MODEL_PATH": "parakeet_model_path",
             "PIPER_MODEL_PATH": "piper_model_path",
+            "AUDIO_DEVICE": "audio_device",
+            "AUDIO_INPUT_DEVICE": "audio_input_device",
+            "AUDIO_OUTPUT_DEVICE": "audio_output_device",
             "PIPER_VOICE": "piper_voice",
             "LLM_API_ENDPOINT": "llm_api_endpoint",
             "LLM_API_KEY": "llm_api_key",
@@ -102,7 +107,13 @@ class Config:
             value = os.environ.get(env_var)
             if value is not None:
                 # Type conversion
-                if isinstance(getattr(config, config_key), bool):
+                if config_key in {
+                    "audio_device",
+                    "audio_input_device",
+                    "audio_output_device",
+                }:
+                    value = int(value) if value.isdigit() else value
+                elif isinstance(getattr(config, config_key), bool):
                     value = value.lower() in ("true", "1", "yes")
                 elif isinstance(getattr(config, config_key), float):
                     value = float(value)
@@ -153,7 +164,9 @@ DEFAULT_CONFIG_JSON = """
 {
     "i2c_bus": 1,
     "display_address": 60,
-    "audio_device": 0,
+    "audio_device": null,
+    "audio_input_device": null,
+    "audio_output_device": null,
 
     "parakeet_model_path": null,
     "piper_model_path": null,

@@ -28,7 +28,71 @@ class ParakeetSTT:
         self._running = False
         self._audio_queue: queue.Queue = queue.Queue()
         self._transcription_thread: Optional[threading.Thread] = None
+        self._input_device_index: Optional[int] = None
         self._audio_available: bool = self._check_audio()
+
+    @staticmethod
+    def _normalize_device_hint(value):
+        if value in (None, "", "auto"):
+            return None
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return value
+
+    def _resolve_input_device(self, p) -> Optional[int]:
+        configured = self._normalize_device_hint(
+            getattr(self.config, "audio_input_device", None)
+        )
+        fallback = self._normalize_device_hint(getattr(self.config, "audio_device", None))
+        preferred = configured if configured is not None else fallback
+
+        devices = []
+        for idx in range(p.get_device_count()):
+            info = p.get_device_info_by_index(idx)
+            if int(info.get("maxInputChannels", 0)) > 0:
+                devices.append((idx, info))
+
+        if not devices:
+            return None
+
+        if isinstance(preferred, int):
+            for idx, info in devices:
+                if idx == preferred:
+                    logger.info(
+                        "Using configured input device %s: %s",
+                        idx,
+                        info.get("name", "unknown"),
+                    )
+                    return idx
+            logger.warning("Configured input device index %s not found", preferred)
+
+        if isinstance(preferred, str):
+            preferred_lower = preferred.lower()
+            for idx, info in devices:
+                name = info.get("name", "").lower()
+                if preferred_lower in name:
+                    logger.info(
+                        "Using configured input device %s: %s",
+                        idx,
+                        info.get("name", "unknown"),
+                    )
+                    return idx
+            logger.warning("Configured input device '%s' not found", preferred)
+
+        keywords = ("respeaker", "seeed", "usb", "mic", "microphone")
+        for idx, info in devices:
+            name = info.get("name", "").lower()
+            if any(keyword in name for keyword in keywords):
+                logger.info(
+                    "Auto-selected input device %s: %s",
+                    idx,
+                    info.get("name", "unknown"),
+                )
+                return idx
+
+        idx, info = devices[0]
+        logger.info("Using default input device %s: %s", idx, info.get("name", "unknown"))
+        return idx
 
     def _check_audio(self) -> bool:
         """Probe for a usable input device."""
@@ -37,10 +101,14 @@ class ParakeetSTT:
             return False
         try:
             p = pyaudio.PyAudio()
+            self._input_device_index = self._resolve_input_device(p)
             count = p.get_device_count()
             p.terminate()
             if count == 0:
                 logger.warning("No audio devices found — STT running in silent mode")
+                return False
+            if self._input_device_index is None:
+                logger.warning("No usable capture device found — STT running in silent mode")
                 return False
             return True
         except Exception as e:
@@ -64,6 +132,7 @@ class ParakeetSTT:
                 channels=1,
                 rate=self._sample_rate,
                 input=True,
+                input_device_index=self._input_device_index,
                 frames_per_buffer=1024,
             )
 

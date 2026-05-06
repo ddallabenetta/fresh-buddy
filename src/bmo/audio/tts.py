@@ -26,7 +26,71 @@ class PiperTTS:
         self._speaker_id = getattr(config, "piper_speaker", None)
         self._noise_scale = getattr(config, "piper_noise_scale", 0.667)
         self._length_scale = getattr(config, "piper_length_scale", 1.0)
+        self._output_device_index: Optional[int] = None
         self._audio_available: bool = self._check_audio()
+
+    @staticmethod
+    def _normalize_device_hint(value):
+        if value in (None, "", "auto"):
+            return None
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return value
+
+    def _resolve_output_device(self, p) -> Optional[int]:
+        configured = self._normalize_device_hint(
+            getattr(self.config, "audio_output_device", None)
+        )
+        fallback = self._normalize_device_hint(getattr(self.config, "audio_device", None))
+        preferred = configured if configured is not None else fallback
+
+        devices = []
+        for idx in range(p.get_device_count()):
+            info = p.get_device_info_by_index(idx)
+            if int(info.get("maxOutputChannels", 0)) > 0:
+                devices.append((idx, info))
+
+        if not devices:
+            return None
+
+        if isinstance(preferred, int):
+            for idx, info in devices:
+                if idx == preferred:
+                    logger.info(
+                        "Using configured output device %s: %s",
+                        idx,
+                        info.get("name", "unknown"),
+                    )
+                    return idx
+            logger.warning("Configured output device index %s not found", preferred)
+
+        if isinstance(preferred, str):
+            preferred_lower = preferred.lower()
+            for idx, info in devices:
+                name = info.get("name", "").lower()
+                if preferred_lower in name:
+                    logger.info(
+                        "Using configured output device %s: %s",
+                        idx,
+                        info.get("name", "unknown"),
+                    )
+                    return idx
+            logger.warning("Configured output device '%s' not found", preferred)
+
+        keywords = ("hdmi", "speaker", "default", "ape")
+        for idx, info in devices:
+            name = info.get("name", "").lower()
+            if any(keyword in name for keyword in keywords):
+                logger.info(
+                    "Auto-selected output device %s: %s",
+                    idx,
+                    info.get("name", "unknown"),
+                )
+                return idx
+
+        idx, info = devices[0]
+        logger.info("Using default output device %s: %s", idx, info.get("name", "unknown"))
+        return idx
 
     def _check_audio(self) -> bool:
         """Probe for a usable output device."""
@@ -35,10 +99,14 @@ class PiperTTS:
             return False
         try:
             p = pyaudio.PyAudio()
+            self._output_device_index = self._resolve_output_device(p)
             count = p.get_device_count()
             p.terminate()
             if count == 0:
                 logger.warning("No audio devices found — TTS playback disabled")
+                return False
+            if self._output_device_index is None:
+                logger.warning("No usable playback device found — TTS playback disabled")
                 return False
             return True
         except Exception as e:
@@ -93,6 +161,7 @@ class PiperTTS:
                 channels=wf.getnchannels(),
                 rate=wf.getframerate(),
                 output=True,
+                output_device_index=self._output_device_index,
             )
 
             chunk_size = 1024

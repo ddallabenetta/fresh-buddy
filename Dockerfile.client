@@ -5,8 +5,18 @@ WORKDIR /app
 # Install system dependencies for audio and display
 RUN apt-get update && apt-get install -y --no-install-recommends \
     portaudio19-dev \
+    libportaudio2 \
+    libasound2-dev \
     libsndfile1-dev \
     libopenblas-dev \
+    libsdl2-2.0-0 \
+    libsdl2-dev \
+    libsdl2-image-dev \
+    libsdl2-mixer-dev \
+    libsdl2-ttf-dev \
+    libfreetype6-dev \
+    libjpeg62-turbo-dev \
+    libpng-dev \
     gcc \
     libc6-dev \
     git \
