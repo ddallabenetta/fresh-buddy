@@ -115,12 +115,15 @@ meetings/
 
 Modifica `config.json` per personalizzare:
 
+Oppure usa un file `.env` nella directory del progetto per impostare variabili come `FIRST_MESSAGE`.
+
 ### Impostazioni Voce
 ```json
 {
     "piper_voice": "it_IT-riccardo-x_low",
     "piper_speaker": null,
-    "piper_length_scale": 1.0
+    "piper_length_scale": 1.0,
+    "tts_volume": 0.3
 }
 ```
 
@@ -137,6 +140,13 @@ Modifica `config.json` per personalizzare:
 {
     "wake_word": "ciao buddy",
     "wake_word_sensitivity": 0.5
+}
+```
+
+### Messaggio Iniziale
+```json
+{
+    "first_message": "Ciao! Sono Fresh Buddy. Come posso aiutarti?"
 }
 ```
 

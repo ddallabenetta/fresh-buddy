@@ -88,9 +88,12 @@ N_GPU_LAYERS=32
 
 # API
 LLM_API_KEY=not-needed
+SYSTEM_PROMPT=Sei Fresh Buddy, un assistente AI amichevole...
+FIRST_MESSAGE=Ciao! Sono Fresh Buddy. Come posso aiutarti?
 
 # TTS
 PIPER_VOICE=it_IT-riccardo-x_low
+TTS_VOLUME=0.3
 
 # App
 APP_PORT=5000
@@ -106,6 +109,7 @@ LOG_LEVEL=INFO
     "llm_api_key": "not-needed",
     "llm_model_name": "model",
     "piper_voice": "it_IT-riccardo-x_low",
+    "tts_volume": 0.3,
     "wake_word": "ciao buddy"
 }
 ```

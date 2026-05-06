@@ -136,6 +136,7 @@ if [ ! -f "config.json" ]; then
     "piper_voice": "en_US-lessac-medium",
     "piper_noise_scale": 0.667,
     "piper_length_scale": 1.0,
+    "tts_volume": 0.3,
     "llm_temperature": 0.7,
     "llm_max_tokens": 512,
     "meeting_storage_dir": "meetings",
