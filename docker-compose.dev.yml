@@ -1,5 +1,3 @@
-version: "3.8"
-
 # Development compose — no OLED, no GPU, no llama.cpp build.
 # Requires Ollama (or any OpenAI-compatible server) running on the host.
 #
