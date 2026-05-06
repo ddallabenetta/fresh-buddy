@@ -90,10 +90,23 @@ N_GPU_LAYERS=32
 LLM_API_KEY=not-needed
 SYSTEM_PROMPT=Sei Fresh Buddy, un assistente AI amichevole...
 FIRST_MESSAGE=Ciao! Sono Fresh Buddy. Come posso aiutarti?
+LLM_TEMPERATURE=0.7
+LLM_MAX_TOKENS=512
+LLM_TOP_P=0.9
 
 # TTS
 PIPER_VOICE=it_IT-riccardo-x_low
 TTS_VOLUME=0.3
+
+# STT tuning
+STT_MAIN_TIMEOUT=12.0
+STT_FOLLOWUP_TIMEOUT=6.0
+STT_STREAM_TIMEOUT=3.0
+STT_ENERGY_THRESHOLD=500
+STT_END_SILENCE_TIMEOUT=0.45
+STT_FOLLOWUP_END_SILENCE_TIMEOUT=0.35
+STT_STREAM_END_SILENCE_TIMEOUT=0.35
+STT_PRE_ROLL_CHUNKS=3
 
 # App
 APP_PORT=5000
@@ -108,8 +121,21 @@ LOG_LEVEL=INFO
     "llm_api_endpoint": "http://llm-server:8080/v1",
     "llm_api_key": "not-needed",
     "llm_model_name": "model",
+    "llm_temperature": 0.7,
+    "llm_max_tokens": 512,
+    "llm_top_p": 0.9,
     "piper_voice": "it_IT-riccardo-x_low",
     "tts_volume": 0.3,
+    "stt_main_timeout": 12.0,
+    "stt_followup_timeout": 6.0,
+    "stt_energy_threshold": 500,
+    "stt_end_silence_timeout": 0.45,
+    "stt_chunk_frames": 512,
+    "stt_beam_size": 1,
+    "stt_best_of": 1,
+    "stt_temperature": 0.0,
+    "stt_vad_filter": true,
+    "stt_condition_on_previous_text": false,
     "wake_word": "ciao buddy"
 }
 ```

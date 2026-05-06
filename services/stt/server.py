@@ -16,6 +16,16 @@ app = FastAPI(title="Fresh Buddy STT Service")
 
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "tiny")
 LANGUAGE = os.environ.get("STT_LANGUAGE", "it")
+DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
+COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+BEAM_SIZE = int(os.environ.get("WHISPER_BEAM_SIZE", "1"))
+BEST_OF = int(os.environ.get("WHISPER_BEST_OF", "1"))
+TEMPERATURE = float(os.environ.get("WHISPER_TEMPERATURE", "0.0"))
+VAD_FILTER = os.environ.get("WHISPER_VAD_FILTER", "true").lower() in {"1", "true", "yes"}
+CONDITION_ON_PREVIOUS_TEXT = (
+    os.environ.get("WHISPER_CONDITION_ON_PREVIOUS_TEXT", "false").lower()
+    in {"1", "true", "yes"}
+)
 
 _model = None
 
@@ -26,7 +36,7 @@ async def load_model():
     from faster_whisper import WhisperModel
 
     logger.info(f"Loading Whisper model '{MODEL_SIZE}' ...")
-    _model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
+    _model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
     logger.info("Whisper model ready")
 
 
@@ -49,7 +59,15 @@ async def transcribe(audio: UploadFile = File(...)):
         tmp_path = f.name
 
     try:
-        segments, info = _model.transcribe(tmp_path, language=LANGUAGE)
+        segments, info = _model.transcribe(
+            tmp_path,
+            language=LANGUAGE,
+            beam_size=BEAM_SIZE,
+            best_of=BEST_OF,
+            temperature=TEMPERATURE,
+            vad_filter=VAD_FILTER,
+            condition_on_previous_text=CONDITION_ON_PREVIOUS_TEXT,
+        )
         text = " ".join(s.text.strip() for s in segments).strip()
         logger.info(f"Transcribed ({info.language}): {text!r}")
         return {"text": text, "language": info.language}

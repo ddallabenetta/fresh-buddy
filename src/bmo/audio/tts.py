@@ -1,10 +1,9 @@
 """TTS client — sends text to the TTS microservice over HTTP."""
 
+import io
 import logging
 import re
 import subprocess
-import tempfile
-from pathlib import Path
 from typing import Optional
 
 import requests
@@ -32,6 +31,7 @@ class PiperTTS:
         )
         self._output_mixer = getattr(config, "audio_output_mixer", None)
         self._output_device_index: Optional[int] = None
+        self._session = requests.Session()
         self._apply_output_volume()
         self._audio_available: bool = self._check_audio()
 
@@ -212,7 +212,7 @@ class PiperTTS:
         logger.info(f"Synthesizing: {text[:50]}...")
 
         try:
-            resp = requests.post(
+            resp = self._session.post(
                 f"{self._base_url}/synthesize",
                 json={"text": text},
                 timeout=30,
@@ -237,11 +237,7 @@ class PiperTTS:
         try:
             import wave
 
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(audio_data)
-                wav_file = f.name
-
-            wf = wave.open(wav_file, "rb")
+            wf = wave.open(io.BytesIO(audio_data), "rb")
             p = pyaudio.PyAudio()
             stream = p.open(
                 format=p.get_format_from_width(wf.getsampwidth()),
@@ -261,7 +257,6 @@ class PiperTTS:
             stream.close()
             p.terminate()
             wf.close()
-            Path(wav_file).unlink(missing_ok=True)
 
         except Exception as e:
             logger.debug(f"Audio playback failed: {e}")
@@ -283,6 +278,10 @@ class PiperTTS:
         logger.info("Speaker change requires TTS service restart")
 
     def cleanup(self):
+        try:
+            self._session.close()
+        except Exception:
+            pass
         logger.info("PiperTTS client cleanup complete")
 
     @staticmethod

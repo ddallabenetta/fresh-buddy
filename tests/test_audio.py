@@ -40,6 +40,72 @@ class TestParakeetSTT(unittest.TestCase):
         self.stt.set_sample_rate(48000)
         self.assertEqual(self.stt.sample_rate, 48000)
 
+    @patch("bmo.audio.stt.pyaudio")
+    def test_listen_uses_config_defaults(self, mock_pyaudio):
+        """Test listen falls back to STT config defaults when args are omitted."""
+        config = SimpleNamespace(
+            stt_main_timeout=0.5,
+            stt_energy_threshold=1,
+            stt_end_silence_timeout=0.15,
+            stt_pre_roll_chunks=1,
+        )
+        stt = ParakeetSTT(config)
+        stt._audio_available = True
+        stt._input_device_index = 0
+
+        speech = (b"\x64\x00") * 1600
+        silence = (b"\x00\x00") * 1600
+
+        stream = Mock()
+        stream.read.side_effect = [speech, speech, silence, silence, silence]
+        stream.stop_stream = Mock()
+        stream.close = Mock()
+
+        p = Mock()
+        p.open.return_value = stream
+        p.terminate = Mock()
+        mock_pyaudio.PyAudio.return_value = p
+        mock_pyaudio.paInt16 = object()
+
+        audio = stt.listen(chunk_frames=1600)
+
+        self.assertIsInstance(audio, bytes)
+        self.assertEqual(stream.read.call_count, 4)
+
+    @patch("bmo.audio.stt.pyaudio")
+    def test_listen_stops_after_silence(self, mock_pyaudio):
+        """Test listen returns as soon as trailing silence is detected."""
+        self.stt._audio_available = True
+        self.stt._input_device_index = 0
+
+        speech = (b"\x64\x00") * 1600
+        silence = (b"\x00\x00") * 1600
+
+        stream = Mock()
+        stream.read.side_effect = [speech, speech, silence, silence, silence]
+        stream.stop_stream = Mock()
+        stream.close = Mock()
+
+        p = Mock()
+        p.open.return_value = stream
+        p.terminate = Mock()
+        mock_pyaudio.PyAudio.return_value = p
+        mock_pyaudio.paInt16 = object()
+
+        audio = self.stt.listen(
+            timeout=0.5,
+            energy_threshold=1,
+            end_silence_timeout=0.15,
+            chunk_frames=1600,
+            pre_roll_chunks=1,
+        )
+
+        self.assertIsInstance(audio, bytes)
+        self.assertEqual(stream.read.call_count, 4)
+        stream.stop_stream.assert_called_once()
+        stream.close.assert_called_once()
+        p.terminate.assert_called_once()
+
     @patch('bmo.audio.stt.pyaudio')
     def test_listen_timeout(self, mock_pyaudio):
         """Test listen returns None on timeout."""

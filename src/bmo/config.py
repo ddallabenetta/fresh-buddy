@@ -29,6 +29,22 @@ class Config:
     stt_endpoint: str = "http://stt:5001"
     tts_endpoint: str = "http://tts:5002"
 
+    # STT behavior tuning
+    stt_main_timeout: float = 12.0
+    stt_followup_timeout: float = 6.0
+    stt_stream_timeout: float = 3.0
+    stt_energy_threshold: int = 500
+    stt_end_silence_timeout: float = 0.45
+    stt_followup_end_silence_timeout: float = 0.35
+    stt_stream_end_silence_timeout: float = 0.35
+    stt_pre_roll_chunks: int = 3
+    stt_chunk_frames: int = 512
+    stt_beam_size: int = 1
+    stt_best_of: int = 1
+    stt_temperature: float = 0.0
+    stt_vad_filter: bool = True
+    stt_condition_on_previous_text: bool = False
+
     # LLM API settings (OpenAI-compatible endpoint)
     llm_api_endpoint: Optional[str] = "http://llm-server:8080/v1"
     llm_api_key: Optional[str] = "not-needed"
@@ -106,6 +122,20 @@ class Config:
         env_mappings = {
             "STT_ENDPOINT": "stt_endpoint",
             "TTS_ENDPOINT": "tts_endpoint",
+            "STT_MAIN_TIMEOUT": "stt_main_timeout",
+            "STT_FOLLOWUP_TIMEOUT": "stt_followup_timeout",
+            "STT_STREAM_TIMEOUT": "stt_stream_timeout",
+            "STT_ENERGY_THRESHOLD": "stt_energy_threshold",
+            "STT_END_SILENCE_TIMEOUT": "stt_end_silence_timeout",
+            "STT_FOLLOWUP_END_SILENCE_TIMEOUT": "stt_followup_end_silence_timeout",
+            "STT_STREAM_END_SILENCE_TIMEOUT": "stt_stream_end_silence_timeout",
+            "STT_PRE_ROLL_CHUNKS": "stt_pre_roll_chunks",
+            "STT_CHUNK_FRAMES": "stt_chunk_frames",
+            "STT_BEAM_SIZE": "stt_beam_size",
+            "STT_BEST_OF": "stt_best_of",
+            "STT_TEMPERATURE": "stt_temperature",
+            "STT_VAD_FILTER": "stt_vad_filter",
+            "STT_CONDITION_ON_PREVIOUS_TEXT": "stt_condition_on_previous_text",
             "PARAKEET_MODEL_PATH": "parakeet_model_path",
             "PIPER_MODEL_PATH": "piper_model_path",
             "AUDIO_DEVICE": "audio_device",
@@ -236,6 +266,21 @@ DEFAULT_CONFIG_JSON = """
     "llm_model_name": "model",
     "system_prompt": null,
     "first_message": "Ciao! Sono Fresh Buddy. Come posso aiutarti?",
+
+    "stt_main_timeout": 12.0,
+    "stt_followup_timeout": 6.0,
+    "stt_stream_timeout": 3.0,
+    "stt_energy_threshold": 500,
+    "stt_end_silence_timeout": 0.45,
+    "stt_followup_end_silence_timeout": 0.35,
+    "stt_stream_end_silence_timeout": 0.35,
+    "stt_pre_roll_chunks": 3,
+    "stt_chunk_frames": 512,
+    "stt_beam_size": 1,
+    "stt_best_of": 1,
+    "stt_temperature": 0.0,
+    "stt_vad_filter": true,
+    "stt_condition_on_previous_text": false,
 
     "piper_voice": "it_IT-paola-medium",
     "piper_speaker": null,

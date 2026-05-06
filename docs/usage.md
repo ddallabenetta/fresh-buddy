@@ -131,7 +131,8 @@ Oppure usa un file `.env` nella directory del progetto per impostare variabili c
 ```json
 {
     "llm_temperature": 0.7,
-    "llm_max_tokens": 512
+    "llm_max_tokens": 512,
+    "llm_top_p": 0.9
 }
 ```
 
@@ -142,6 +143,26 @@ Oppure usa un file `.env` nella directory del progetto per impostare variabili c
     "wake_word_sensitivity": 0.5
 }
 ```
+
+### STT Tuning
+```json
+{
+    "stt_main_timeout": 12.0,
+    "stt_followup_timeout": 6.0,
+    "stt_energy_threshold": 500,
+    "stt_end_silence_timeout": 0.45,
+    "stt_followup_end_silence_timeout": 0.35,
+    "stt_pre_roll_chunks": 3,
+    "stt_chunk_frames": 512,
+    "stt_beam_size": 1,
+    "stt_best_of": 1,
+    "stt_temperature": 0.0,
+    "stt_vad_filter": true,
+    "stt_condition_on_previous_text": false
+}
+```
+
+Per ridurre la latenza, i valori consigliati sono quelli sopra: `beam_size=1`, `best_of=1`, `vad_filter=true`, `condition_on_previous_text=false` e `stt_chunk_frames=512`. Se vuoi più accuratezza al costo di più tempo, aumenta `beam_size` o disattiva `vad_filter`.
 
 ### Messaggio Iniziale
 ```json

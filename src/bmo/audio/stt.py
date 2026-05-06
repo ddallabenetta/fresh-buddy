@@ -1,11 +1,13 @@
 """STT client — sends audio to the STT microservice over HTTP."""
 
 import io
+import math
 import logging
 import queue
 import threading
 import time
 import wave
+from collections import deque
 from typing import Optional
 
 import requests
@@ -25,11 +27,19 @@ class ParakeetSTT:
         self.config = config
         self._base_url = getattr(config, "stt_endpoint", "http://stt:5001").rstrip("/")
         self._sample_rate = 16000
+        self._default_timeout = float(getattr(config, "stt_main_timeout", 5.0))
+        self._default_energy_threshold = int(getattr(config, "stt_energy_threshold", 500))
+        self._default_end_silence_timeout = float(
+            getattr(config, "stt_end_silence_timeout", 0.6)
+        )
+        self._default_pre_roll_chunks = int(getattr(config, "stt_pre_roll_chunks", 3))
+        self._default_chunk_frames = int(getattr(config, "stt_chunk_frames", 512))
         self._running = False
         self._audio_queue: queue.Queue = queue.Queue()
         self._transcription_thread: Optional[threading.Thread] = None
         self._input_device_index: Optional[int] = None
         self._audio_available: bool = self._check_audio()
+        self._session = requests.Session()
 
     @staticmethod
     def _normalize_device_hint(value):
@@ -115,7 +125,29 @@ class ParakeetSTT:
             logger.warning(f"Audio not available ({e}) — STT running in silent mode")
             return False
 
-    def listen(self, timeout: float = 5.0) -> Optional[bytes]:
+    @staticmethod
+    def _chunk_energy(frame: bytes) -> int:
+        """Return an RMS energy estimate for a raw 16-bit mono PCM frame."""
+        if not frame:
+            return 0
+
+        try:
+            import audioop
+
+            return audioop.rms(frame, 2)
+        except Exception:
+            # Fall back to "non-empty means probably speech" if audioop is unavailable.
+            return 1 if any(frame) else 0
+
+    def listen(
+        self,
+        timeout: Optional[float] = None,
+        *,
+        energy_threshold: Optional[int] = None,
+        end_silence_timeout: Optional[float] = None,
+        chunk_frames: Optional[int] = None,
+        pre_roll_chunks: Optional[int] = None,
+    ) -> Optional[bytes]:
         """
         Capture audio from the microphone.
 
@@ -125,6 +157,26 @@ class ParakeetSTT:
             time.sleep(0.5)
             return None
 
+        timeout = self._default_timeout if timeout is None else timeout
+        energy_threshold = (
+            self._default_energy_threshold
+            if energy_threshold is None
+            else energy_threshold
+        )
+        end_silence_timeout = (
+            self._default_end_silence_timeout
+            if end_silence_timeout is None
+            else end_silence_timeout
+        )
+        chunk_frames = self._default_chunk_frames if chunk_frames is None else chunk_frames
+        pre_roll_chunks = (
+            self._default_pre_roll_chunks
+            if pre_roll_chunks is None
+            else pre_roll_chunks
+        )
+
+        p = None
+        stream = None
         try:
             p = pyaudio.PyAudio()
             stream = p.open(
@@ -133,26 +185,46 @@ class ParakeetSTT:
                 rate=self._sample_rate,
                 input=True,
                 input_device_index=self._input_device_index,
-                frames_per_buffer=1024,
+                frames_per_buffer=chunk_frames,
             )
 
             logger.debug("Listening for audio...")
             frames = []
-            chunk_count = int(self._sample_rate / 1024 * timeout)
+            pre_roll = deque(maxlen=max(0, pre_roll_chunks))
+            speech_started = False
+            silent_chunks = 0
+            chunk_duration = chunk_frames / float(self._sample_rate)
+            max_chunks = max(1, math.ceil(timeout / chunk_duration))
+            max_silent_chunks = max(1, math.ceil(end_silence_timeout / chunk_duration))
 
-            for _ in range(chunk_count):
+            for _ in range(max_chunks):
                 try:
-                    data = stream.read(1024, exception_on_overflow=False)
-                    frames.append(data)
+                    data = stream.read(chunk_frames, exception_on_overflow=False)
                 except Exception:
                     break
 
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
+                energy = self._chunk_energy(data)
+                is_silent = energy < energy_threshold
 
-            if frames:
-                # Wrap raw PCM in a WAV container so the service can decode it
+                if not speech_started:
+                    pre_roll.append(data)
+                    if not is_silent:
+                        speech_started = True
+                        frames.extend(pre_roll)
+                        pre_roll.clear()
+                    continue
+
+                frames.append(data)
+
+                if is_silent:
+                    silent_chunks += 1
+                    if silent_chunks >= max_silent_chunks:
+                        break
+                else:
+                    silent_chunks = 0
+
+            if frames and speech_started:
+                # Wrap raw PCM in a WAV container so the service can decode it.
                 buf = io.BytesIO()
                 wf = wave.open(buf, "wb")
                 wf.setnchannels(1)
@@ -166,6 +238,21 @@ class ParakeetSTT:
 
         except Exception as e:
             logger.debug(f"Audio capture failed: {e}")
+        finally:
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                except Exception:
+                    pass
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            if p is not None:
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
 
         return None
 
@@ -175,7 +262,7 @@ class ParakeetSTT:
             return ""
 
         try:
-            resp = requests.post(
+            resp = self._session.post(
                 f"{self._base_url}/transcribe",
                 files={"audio": ("audio.wav", audio_data, "audio/wav")},
                 timeout=15,
@@ -209,7 +296,13 @@ class ParakeetSTT:
     def _streaming_loop(self):
         while self._running:
             try:
-                audio_data = self.listen(timeout=3)
+                audio_data = self.listen(
+                    timeout=getattr(self.config, "stt_stream_timeout", 3.0),
+                    end_silence_timeout=getattr(
+                        self.config, "stt_stream_end_silence_timeout", 0.35
+                    ),
+                    chunk_frames=getattr(self.config, "stt_chunk_frames", 512),
+                )
                 if audio_data:
                     text = self.transcribe(audio_data)
                     if text.strip():
@@ -226,6 +319,12 @@ class ParakeetSTT:
 
     def set_sample_rate(self, rate: int):
         self._sample_rate = rate
+
+    def cleanup(self):
+        try:
+            self._session.close()
+        except Exception:
+            pass
 
     @property
     def sample_rate(self) -> int:
