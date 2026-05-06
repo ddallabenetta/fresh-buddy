@@ -6,10 +6,16 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import uvicorn
+from audio_utils import apply_volume, load_volume
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
+
+try:
+    import uvicorn
+except ImportError:  # pragma: no cover - only needed when running the HTTP server
+    uvicorn = None
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -18,6 +24,13 @@ app = FastAPI(title="Fresh Buddy TTS Service")
 
 VOICE = os.environ.get("PIPER_VOICE", "it_IT-riccardo-x_low")
 MODEL_PATH = os.environ.get("PIPER_MODEL_PATH", f"/app/voices/{VOICE}.onnx")
+
+
+def _load_volume() -> float:
+    return load_volume()
+
+
+TTS_VOLUME = _load_volume()
 
 
 class SynthesizeRequest(BaseModel):
@@ -57,6 +70,8 @@ def synthesize(req: SynthesizeRequest):
             logger.error(f"Piper error: {result.stderr}")
             raise HTTPException(500, "Synthesis failed")
 
+        apply_volume(output_file, TTS_VOLUME)
+
         with open(output_file, "rb") as f:
             wav_bytes = f.read()
 
@@ -71,4 +86,6 @@ def synthesize(req: SynthesizeRequest):
 
 
 if __name__ == "__main__":
+    if uvicorn is None:
+        raise RuntimeError("uvicorn is required to run the TTS service")
     uvicorn.run(app, host="0.0.0.0", port=5002)

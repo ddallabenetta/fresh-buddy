@@ -127,6 +127,8 @@ Copy `.env.example` to `.env` and configure:
 ```bash
 cp .env.example .env
 # Edit .env with your settings
+# Example: SYSTEM_PROMPT=Sei un assistente minimalista.
+# Example: FIRST_MESSAGE=Ciao! Sono Fresh Buddy. Come posso aiutarti?
 ```
 
 ## 🧪 Testing

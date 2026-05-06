@@ -21,6 +21,7 @@ services:
     container_name: fresh-buddy-tts
     environment:
       - PIPER_VOICE=${PIPER_VOICE:-it_IT-riccardo-x_low}
+      - TTS_VOLUME=${TTS_VOLUME:-0.3}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - piper-voices:/app/voices
@@ -33,6 +34,8 @@ services:
       dockerfile: Dockerfile.client
     image: fresh-buddy/app:latest
     container_name: fresh-buddy
+    env_file:
+      - .env
     depends_on:
       - stt
       - tts
@@ -64,6 +67,7 @@ services:
       - STT_ENDPOINT=http://stt:5001
       - TTS_ENDPOINT=http://tts:5002
       - PIPER_VOICE=${PIPER_VOICE:-it_IT-paola-medium}
+      - TTS_VOLUME=${TTS_VOLUME:-0.3}
       - AUDIO_INPUT_DEVICE=${AUDIO_INPUT_DEVICE:-ReSpeaker}
       - AUDIO_OUTPUT_DEVICE=${AUDIO_OUTPUT_DEVICE:-ReSpeaker}
       - DEBUG_MODE=${DEBUG_MODE:-false}

@@ -36,6 +36,7 @@ class TestFreshBuddyStartup(unittest.TestCase):
         self.mock_config = MagicMock()
         self.mock_config_cls.load.return_value = self.mock_config
         self.mock_config.tts_endpoint = "http://localhost:5000"
+        self.mock_config.first_message = "Messaggio iniziale personalizzato."
 
         self.mock_display = self.display_patcher.start()
         self.mock_stt = self.stt_patcher.start()
@@ -91,9 +92,8 @@ class TestFreshBuddyStartup(unittest.TestCase):
         with patch.object(buddy, "_speak") as mock_speak:
             buddy.startup()
             mock_speak.assert_called_once()
-            # Should contain greeting-like text
             args, _ = mock_speak.call_args
-            self.assertIn("Ciao", args[0])
+            self.assertEqual(args[0], "Messaggio iniziale personalizzato.")
 
 
 # ── Expression sequence: startup -> listening -> speaking -> happy -> neutral ─

@@ -1,6 +1,7 @@
 """TTS client — sends text to the TTS microservice over HTTP."""
 
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,7 +27,12 @@ class PiperTTS:
         self._speaker_id = getattr(config, "piper_speaker", None)
         self._noise_scale = getattr(config, "piper_noise_scale", 0.667)
         self._length_scale = getattr(config, "piper_length_scale", 1.0)
+        self._output_volume = self._normalize_output_volume(
+            getattr(config, "audio_output_volume", None)
+        )
+        self._output_mixer = getattr(config, "audio_output_mixer", None)
         self._output_device_index: Optional[int] = None
+        self._apply_output_volume()
         self._audio_available: bool = self._check_audio()
 
     @staticmethod
@@ -36,6 +42,22 @@ class PiperTTS:
         if isinstance(value, str) and value.isdigit():
             return int(value)
         return value
+
+    @staticmethod
+    def _normalize_output_volume(value) -> Optional[float]:
+        if value in (None, "", "auto"):
+            return None
+
+        try:
+            volume = float(value)
+        except (TypeError, ValueError):
+            logger.warning("Invalid audio_output_volume %r, ignoring it", value)
+            return None
+
+        if 0.0 <= volume <= 1.0:
+            volume *= 100.0
+
+        return max(0.0, min(volume, 100.0))
 
     def _resolve_output_device(self, p) -> Optional[int]:
         configured = self._normalize_device_hint(
@@ -91,6 +113,71 @@ class PiperTTS:
         idx, info = devices[0]
         logger.info("Using default output device %s: %s", idx, info.get("name", "unknown"))
         return idx
+
+    def _resolve_output_mixer(self) -> Optional[str]:
+        if self._output_mixer:
+            return str(self._output_mixer)
+
+        try:
+            result = subprocess.run(
+                ["amixer", "scontrols"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        preferred_controls = ("Speaker", "PCM", "Master", "Playback", "Headphone")
+        available_controls = []
+        for line in result.stdout.splitlines():
+            match = re.search(r"Simple mixer control '([^']+)'", line)
+            if match:
+                available_controls.append(match.group(1))
+
+        for preferred in preferred_controls:
+            for control in available_controls:
+                if control.lower() == preferred.lower():
+                    return control
+
+        return available_controls[0] if available_controls else None
+
+    def _apply_output_volume(self) -> None:
+        if self._output_volume is None:
+            return
+
+        mixer = self._resolve_output_mixer()
+        if mixer is None:
+            logger.warning(
+                "Could not find an ALSA mixer control; output volume stays unchanged"
+            )
+            return
+
+        try:
+            result = subprocess.run(
+                ["amixer", "sset", mixer, f"{self._output_volume:.0f}%"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "Failed to set output mixer %s to %s%%: %s",
+                    mixer,
+                    self._output_volume,
+                    result.stderr.strip(),
+                )
+            else:
+                logger.info(
+                    "Set output mixer %s to %s%%",
+                    mixer,
+                    self._output_volume,
+                )
+        except FileNotFoundError:
+            logger.warning("amixer not installed; output volume stays unchanged")
 
     def _check_audio(self) -> bool:
         """Probe for a usable output device."""

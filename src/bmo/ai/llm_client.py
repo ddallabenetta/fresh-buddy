@@ -19,6 +19,13 @@ except ImportError:
 class LLMClient:
     """Interface to LLM via OpenAI-compatible API endpoint."""
 
+    _DEFAULT_SYSTEM_PROMPT = (
+        "Sei Fresh Buddy, un assistente AI amichevole integrato in un dispositivo fisico con un viso animato. "
+        "Rispondi SEMPRE in italiano, in modo naturale e conciso. "
+        "Non usare mai l'inglese o altre lingue, a meno che l'utente non ti scriva esplicitamente in un'altra lingua."
+        "Usa frasi brevi e concise, evitando l'utilizzo di emoji."
+    )
+
     def __init__(self, config=None):
         """
         Initialize LLM API client.
@@ -38,12 +45,7 @@ class LLMClient:
         self.max_tokens = getattr(self.config, "llm_max_tokens", 512)
         self.top_p = getattr(self.config, "llm_top_p", 0.9)
 
-        _base = (
-            "Sei Fresh Buddy, un assistente AI amichevole integrato in un dispositivo fisico con un viso animato. "
-            "Rispondi SEMPRE in italiano, in modo naturale e conciso. "
-            "Non usare mai l'inglese o altre lingue, a meno che l'utente non ti scriva esplicitamente in un'altra lingua."
-            "Usa frasi brevi e concise, evitando l'utilizzo di emoji."
-        )
+        _base = getattr(self.config, "system_prompt", None) or self._DEFAULT_SYSTEM_PROMPT
         self._system_prompt_base = _base
         # Extended version used when the backend doesn't support tool/function calling.
         self._system_prompt_with_tag = (

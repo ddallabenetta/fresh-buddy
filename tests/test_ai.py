@@ -1,5 +1,7 @@
 """Tests for AI Modules (LLM Client and Meeting Assistant)"""
 
+import os
+import tempfile
 import unittest
 from unittest.mock import Mock, MagicMock, patch
 import sys
@@ -10,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from bmo.ai.llm_client import LLMClient
 from bmo.ai.meeting import MeetingAssistant
+from bmo.config import Config
 from bmo.audio.stt import ParakeetSTT
 from bmo.audio.tts import PiperTTS
 
@@ -78,6 +81,55 @@ class TestLLMClient(unittest.TestCase):
         """Test is_initialized returns correct state."""
         # Without real model, should return False
         self.assertFalse(self.llm.is_initialized())
+
+    def test_system_prompt_can_be_loaded_from_env_file(self):
+        """Test the config reads SYSTEM_PROMPT from a local .env file."""
+        original_cwd = Path.cwd()
+        original_env = os.environ.copy()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            (tmp_path / ".env").write_text(
+                "SYSTEM_PROMPT=Sei un assistente minimalista.\n",
+                encoding="utf-8",
+            )
+
+            try:
+                os.chdir(tmp_path)
+                with patch.dict(os.environ, original_env, clear=True):
+                    config = Config.load()
+            finally:
+                os.chdir(original_cwd)
+
+        self.assertEqual(config.system_prompt, "Sei un assistente minimalista.")
+
+    def test_first_message_can_be_loaded_from_env_file(self):
+        """Test the config reads FIRST_MESSAGE from a local .env file."""
+        original_cwd = Path.cwd()
+        original_env = os.environ.copy()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            (tmp_path / ".env").write_text(
+                'FIRST_MESSAGE="Benvenuto in Fresh Buddy."\n',
+                encoding="utf-8",
+            )
+
+            try:
+                os.chdir(tmp_path)
+                with patch.dict(os.environ, original_env, clear=True):
+                    config = Config.load()
+            finally:
+                os.chdir(original_cwd)
+
+        self.assertEqual(config.first_message, "Benvenuto in Fresh Buddy.")
+
+    def test_llm_uses_configured_system_prompt(self):
+        """Test that LLMClient uses the configured system prompt by default."""
+        config = Config.from_dict({"system_prompt": "Sei un assistente minimalista."})
+        llm = LLMClient(config)
+
+        self.assertEqual(llm.default_system_prompt, "Sei un assistente minimalista.")
 
 
 class TestMeetingAssistant(unittest.TestCase):

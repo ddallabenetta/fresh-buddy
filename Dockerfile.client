@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     portaudio19-dev \
     libportaudio2 \
     libasound2-dev \
+    alsa-utils \
     libsndfile1-dev \
     libopenblas-dev \
     libsdl2-2.0-0 \

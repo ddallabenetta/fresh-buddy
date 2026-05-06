@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, MagicMock, patch
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -84,6 +85,27 @@ class TestPiperTTS(unittest.TestCase):
         """Test setting speaker ID."""
         self.tts.set_speaker(2)
         self.assertEqual(self.tts._speaker_id, 2)
+
+    @patch("bmo.audio.tts.subprocess.run")
+    def test_output_volume_is_applied_on_init(self, mock_run):
+        """Test ALSA output volume is configured during initialization."""
+        mock_run.side_effect = [
+            Mock(
+                returncode=0,
+                stdout="Simple mixer control 'Speaker',0\n",
+                stderr="",
+            ),
+            Mock(returncode=0, stdout="", stderr=""),
+        ]
+
+        tts = PiperTTS(SimpleNamespace(audio_output_volume=0.6))
+
+        self.assertIsNotNone(tts)
+        self.assertEqual(mock_run.call_args_list[0].args[0], ["amixer", "scontrols"])
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["amixer", "sset", "Speaker", "60%"],
+        )
 
     def test_speak_empty_text(self):
         """Test speaking empty text returns None."""

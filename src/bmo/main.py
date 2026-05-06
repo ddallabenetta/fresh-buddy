@@ -60,7 +60,9 @@ class FreshBuddy:
         """Show startup animation."""
         logger.info("Fresh Buddy starting up...")
         self.expressions.show_expression("happy")
-        self._speak("Ciao! Sono Fresh Buddy. Come posso aiutarti?")
+        self._speak(
+            self.config.first_message or "Ciao! Sono Fresh Buddy. Come posso aiutarti?"
+        )
 
     def shutdown(self):
         """Clean shutdown sequence."""
