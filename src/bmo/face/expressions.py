@@ -286,16 +286,20 @@ class ExpressionEngine:
 
     def _commit(self, fy: int = 0):
         frame = self._post_process_frame(self._buf)
-        dc = self.display.canvas
-        if isinstance(dc, np.ndarray):
-            if fy == 0:
-                np.copyto(dc, frame)
-            elif fy > 0:
-                dc[:] = BL
-                dc[fy:, :] = frame[:-fy, :]
+        if fy == 0:
+            composed = frame
+        else:
+            composed = np.full_like(frame, BL)
+            if fy > 0:
+                composed[fy:, :] = frame[:-fy, :]
             else:
-                dc[:] = BL
-                dc[:fy, :] = frame[-fy:, :]
+                composed[:fy, :] = frame[-fy:, :]
+        if hasattr(self.display, "present_frame"):
+            self.display.present_frame(composed)
+        else:
+            dc = self.display.canvas
+            if isinstance(dc, np.ndarray):
+                np.copyto(dc, composed)
         self.display.show()
 
     def _post_process_frame(self, source: np.ndarray) -> np.ndarray:

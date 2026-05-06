@@ -1,5 +1,6 @@
 """Fresh Buddy - Main Entry Point"""
 
+import atexit
 import argparse
 import logging
 import queue
@@ -23,6 +24,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_TERM_CURSOR_HIDDEN = False
+
+
+def _set_terminal_cursor_visible(visible: bool) -> None:
+    """Hide the tty cursor while Fresh Buddy is running."""
+    if not sys.stdout.isatty():
+        return
+    try:
+        sys.stdout.write("\033[?25h" if visible else "\033[?25l")
+        sys.stdout.flush()
+    except Exception:
+        pass
+
 
 class FreshBuddy:
     """Main Fresh Buddy application."""
@@ -30,6 +44,12 @@ class FreshBuddy:
     def __init__(self, config: Config = None):
         self.config = config or Config.load()
         self.running = False
+
+        global _TERM_CURSOR_HIDDEN
+        if not _TERM_CURSOR_HIDDEN:
+            _set_terminal_cursor_visible(False)
+            atexit.register(_set_terminal_cursor_visible, True)
+            _TERM_CURSOR_HIDDEN = True
 
         # Initialize components
         logger.info("Initializing Fresh Buddy...")

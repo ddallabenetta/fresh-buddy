@@ -15,6 +15,7 @@ import logging
 import mmap
 import os
 import time
+import threading
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ class OLEDDisplay:
             self._canvas = None
 
         self._framebuffer = bytearray(self.WIDTH * self.HEIGHT)
+        self._lock = threading.RLock()
 
         self._target_fps     = self._DEFAULT_FPS
         self._frame_interval = 1.0 / self._DEFAULT_FPS
@@ -238,72 +240,77 @@ class OLEDDisplay:
     # ── drawing API ───────────────────────────────────────────────
 
     def clear(self):
-        if _NUMPY and self._canvas is not None:
-            self._canvas[:] = 0
-        for i in range(len(self._framebuffer)):
-            self._framebuffer[i] = 0
+        with self._lock:
+            if _NUMPY and self._canvas is not None:
+                self._canvas[:] = 0
+            for i in range(len(self._framebuffer)):
+                self._framebuffer[i] = 0
 
     def set_pixel(self, x: int, y: int, color=WHITE):
         if not (0 <= x < self.WIDTH and 0 <= y < self.HEIGHT):
             return
         c = self._to_canvas(color)
-        if _NUMPY and self._canvas is not None:
-            self._canvas[y, x] = c
-        else:
-            self._framebuffer[y * self.WIDTH + x] = c
+        with self._lock:
+            if _NUMPY and self._canvas is not None:
+                self._canvas[y, x] = c
+            else:
+                self._framebuffer[y * self.WIDTH + x] = c
 
     def draw_rect(self, x: int, y: int, width: int, height: int,
                   color=WHITE, fill: bool = False):
         c = self._to_canvas(color)
-        if fill:
-            for dy in range(height):
+        with self._lock:
+            if fill:
+                for dy in range(height):
+                    for dx in range(width):
+                        self.set_pixel(x + dx, y + dy, c)
+            else:
                 for dx in range(width):
-                    self.set_pixel(x + dx, y + dy, c)
-        else:
-            for dx in range(width):
-                self.set_pixel(x + dx, y,              c)
-                self.set_pixel(x + dx, y + height - 1, c)
-            for dy in range(height):
-                self.set_pixel(x,          y + dy, c)
-                self.set_pixel(x + width - 1, y + dy, c)
+                    self.set_pixel(x + dx, y,              c)
+                    self.set_pixel(x + dx, y + height - 1, c)
+                for dy in range(height):
+                    self.set_pixel(x,          y + dy, c)
+                    self.set_pixel(x + width - 1, y + dy, c)
 
     def draw_glow_rect(self, x: int, y: int, w: int, h: int,
                        color=WHITE, intensity: int = 6) -> None:
         intensity = max(1, min(12, int(intensity)))
         c = self._to_canvas(color)
-        self.draw_rect(x, y, w, h, c, fill=True)
-        for ring in range(1, intensity + 1):
-            rx, ry, rw, rh = x - ring, y - ring, w + ring * 2, h + ring * 2
-            step = 1 + (ring - 1) // 2
-            for dx in range(0, rw, step):
-                self.set_pixel(rx + dx, ry,          c)
-                self.set_pixel(rx + dx, ry + rh - 1, c)
-            for dy in range(0, rh, step):
-                self.set_pixel(rx,          ry + dy, c)
-                self.set_pixel(rx + rw - 1, ry + dy, c)
+        with self._lock:
+            self.draw_rect(x, y, w, h, c, fill=True)
+            for ring in range(1, intensity + 1):
+                rx, ry, rw, rh = x - ring, y - ring, w + ring * 2, h + ring * 2
+                step = 1 + (ring - 1) // 2
+                for dx in range(0, rw, step):
+                    self.set_pixel(rx + dx, ry,          c)
+                    self.set_pixel(rx + dx, ry + rh - 1, c)
+                for dy in range(0, rh, step):
+                    self.set_pixel(rx,          ry + dy, c)
+                    self.set_pixel(rx + rw - 1, ry + dy, c)
 
     def draw_ellipse(self, cx: int, cy: int, rx: int, ry: int,
                      color=WHITE, fill: bool = True):
         import math
         c = self._to_canvas(color)
-        if fill:
-            for dy in range(-ry, ry + 1):
-                y = cy + dy
-                if not (0 <= y < self.HEIGHT):
-                    continue
-                w = int(rx * math.sqrt(max(0.0, 1.0 - (dy / ry) ** 2))) if ry else 0
-                x0, x1 = max(0, cx - w), min(self.WIDTH, cx + w + 1)
-                if _NUMPY and self._canvas is not None:
-                    self._canvas[y, x0:x1] = c
-                else:
-                    for x in range(x0, x1):
-                        self._framebuffer[y * self.WIDTH + x] = c
-        else:
-            for angle in range(0, 360, 2):
-                rad = math.radians(angle)
-                self.set_pixel(
-                    int(cx + rx * math.cos(rad)),
-                    int(cy + ry * math.sin(rad)), c)
+        with self._lock:
+            if fill:
+                for dy in range(-ry, ry + 1):
+                    y = cy + dy
+                    if not (0 <= y < self.HEIGHT):
+                        continue
+                    w = int(rx * math.sqrt(max(0.0, 1.0 - (dy / ry) ** 2))) if ry else 0
+                    x0, x1 = max(0, cx - w), min(self.WIDTH, cx + w + 1)
+                    if _NUMPY and self._canvas is not None:
+                        self._canvas[y, x0:x1] = c
+                    else:
+                        for x in range(x0, x1):
+                            self._framebuffer[y * self.WIDTH + x] = c
+            else:
+                for angle in range(0, 360, 2):
+                    rad = math.radians(angle)
+                    self.set_pixel(
+                        int(cx + rx * math.cos(rad)),
+                        int(cy + ry * math.sin(rad)), c)
 
     def draw_circle(self, cx: int, cy: int, r: int, color=WHITE, fill: bool = False):
         self.draw_ellipse(cx, cy, r, r, color=self._to_canvas(color), fill=fill)
@@ -315,25 +322,27 @@ class OLEDDisplay:
         steps = max(1, dx if dx >= dy else dy)
         xs = np.round(np.linspace(x1, x2, steps)).astype(int)
         ys = np.round(np.linspace(y1, y2, steps)).astype(int)
-        for x, y in zip(xs, ys):
-            for w in range(width):
-                self.set_pixel(x, y - width // 2 + w, c)
+        with self._lock:
+            for x, y in zip(xs, ys):
+                for w in range(width):
+                    self.set_pixel(x, y - width // 2 + w, c)
 
     def draw_polygon(self, points, color=WHITE, fill: bool = False):
         c = self._to_canvas(color)
-        if fill:
-            xmin = min(p[0] for p in points)
-            xmax = max(p[0] for p in points)
-            ymin = min(p[1] for p in points)
-            ymax = max(p[1] for p in points)
-            for y in range(ymin, ymax + 1):
-                for x in range(xmin, xmax + 1):
-                    if self._point_in_polygon(x, y, points):
-                        self.set_pixel(x, y, c)
-        else:
-            for i in range(-1, len(points) - 1):
-                self.draw_line(points[i][0], points[i][1],
-                               points[i + 1][0], points[i + 1][1], c)
+        with self._lock:
+            if fill:
+                xmin = min(p[0] for p in points)
+                xmax = max(p[0] for p in points)
+                ymin = min(p[1] for p in points)
+                ymax = max(p[1] for p in points)
+                for y in range(ymin, ymax + 1):
+                    for x in range(xmin, xmax + 1):
+                        if self._point_in_polygon(x, y, points):
+                            self.set_pixel(x, y, c)
+            else:
+                for i in range(-1, len(points) - 1):
+                    self.draw_line(points[i][0], points[i][1],
+                                   points[i + 1][0], points[i + 1][1], c)
 
     def _point_in_polygon(self, x: int, y: int, points) -> bool:
         n = len(points)
@@ -388,21 +397,22 @@ class OLEDDisplay:
             '?': [0x42,0x01,0x7F,0x01,0x40],
         }
         c = self._to_canvas(color)
-        cx = x
-        for char in text.upper():
-            if char not in font:
+        with self._lock:
+            cx = x
+            for char in text.upper():
+                if char not in font:
+                    cx += 6 * scale
+                    continue
+                for col, byte in enumerate(font[char]):
+                    for row in range(8):
+                        if byte & (1 << row):
+                            for sy in range(scale):
+                                for sx in range(scale):
+                                    px = cx + col * scale + sx
+                                    py = y + row * scale + sy
+                                    if 0 <= px < self.WIDTH and 0 <= py < self.HEIGHT:
+                                        self.set_pixel(px, py, c)
                 cx += 6 * scale
-                continue
-            for col, byte in enumerate(font[char]):
-                for row in range(8):
-                    if byte & (1 << row):
-                        for sy in range(scale):
-                            for sx in range(scale):
-                                px = cx + col * scale + sx
-                                py = y + row * scale + sy
-                                if 0 <= px < self.WIDTH and 0 <= py < self.HEIGHT:
-                                    self.set_pixel(px, py, c)
-            cx += 6 * scale
 
     def draw_sprite(self, image_path: str, x: int = 0, y: int = 0):
         if not _PYGAME_OK or self._screen is None:
@@ -422,15 +432,19 @@ class OLEDDisplay:
 
         if _PYGAME_OK and self._screen is not None:
             import pygame
-            import pygame.surfarray as surfarray
+            with self._lock:
+                canvas = self._canvas.copy() if _NUMPY and self._canvas is not None else None
             rgb = np.zeros((self.HEIGHT, self.WIDTH, 3), dtype=np.uint8)
-            lit = self._canvas > 0
-            rgb[lit] = (255, 255, 255)
+            if canvas is not None:
+                lit = canvas > 0
+                rgb[lit] = (255, 255, 255)
             surf = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
             self._screen.fill((0, 0, 0))
             self._screen.blit(surf, (0, 0))
             pygame.display.flip()
         elif self._fb_map is not None and _NUMPY and self._canvas is not None:
+            with self._lock:
+                canvas = self._canvas.copy()
             frame = np.zeros(
                 (self._fb_virtual_height, self._fb_virtual_width, 4), dtype=np.uint8
             )
@@ -438,7 +452,7 @@ class OLEDDisplay:
             y_off = max(0, (self._fb_virtual_height - self.HEIGHT) // 2)
             crop_w = min(self.WIDTH, self._fb_virtual_width)
             crop_h = min(self.HEIGHT, self._fb_virtual_height)
-            gray = self._canvas[:crop_h, :crop_w]
+            gray = canvas[:crop_h, :crop_w]
             region = frame[y_off:y_off + crop_h, x_off:x_off + crop_w]
             region[..., 0] = gray
             region[..., 1] = gray
@@ -476,9 +490,19 @@ class OLEDDisplay:
     # ── debug / preview ─────────────────────────────────────────
 
     def get_framebuffer(self) -> bytearray:
-        if _NUMPY and self._canvas is not None:
-            return bytearray(self._canvas.tobytes())
-        return self._framebuffer or bytearray(self.WIDTH * self.HEIGHT)
+        with self._lock:
+            if _NUMPY and self._canvas is not None:
+                return bytearray(self._canvas.tobytes())
+            return self._framebuffer or bytearray(self.WIDTH * self.HEIGHT)
+
+    def present_frame(self, frame) -> None:
+        """Atomically copy a complete frame into the display back buffer."""
+        with self._lock:
+            if _NUMPY and self._canvas is not None:
+                np.copyto(self._canvas, frame)
+            else:
+                data = frame.tobytes() if hasattr(frame, "tobytes") else bytes(frame)
+                self._framebuffer[:] = data[: len(self._framebuffer)]
 
     def is_available(self) -> bool:
         return self._initialized
