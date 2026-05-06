@@ -6,6 +6,7 @@ import queue
 import re
 import signal
 import sys
+import threading
 from pathlib import Path
 
 from bmo.config import Config
@@ -38,6 +39,12 @@ class FreshBuddy:
         self.tts = PiperTTS(self.config)
         self.llm = LLMClient(self.config)
         self.meeting = MeetingAssistant(self.llm, self.stt, self.tts)
+        self._chat_lock = threading.Lock()
+        self._chat_history_limit = 25
+        self._chat_system_prompt = self._resolve_chat_system_prompt()
+        self._chat_history = [
+            {"role": "system", "content": self._chat_system_prompt},
+        ]
 
         # Wire up interactive dev console (no-op if preview server not running)
         preview_server.configure(
@@ -49,6 +56,23 @@ class FreshBuddy:
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+
+    def _resolve_chat_system_prompt(self) -> str:
+        """Return a stable system prompt for the interactive chat session."""
+        prompt = getattr(self.llm, "default_system_prompt", None)
+        if isinstance(prompt, str) and prompt.strip():
+            return prompt
+        return getattr(LLMClient, "_DEFAULT_SYSTEM_PROMPT", "Sei Fresh Buddy.")
+
+    def _append_chat_history(self, role: str, content: str):
+        """Append a message and keep the session bounded."""
+        self._chat_history.append({"role": role, "content": content})
+        if len(self._chat_history) <= self._chat_history_limit:
+            return
+
+        # Keep the system prompt plus the most recent turns.
+        tail_size = max(self._chat_history_limit - 1, 1)
+        self._chat_history = [self._chat_history[0], *self._chat_history[-tail_size:]]
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
@@ -70,6 +94,8 @@ class FreshBuddy:
         self.expressions.show_expression("sleeping")
         if hasattr(self.stt, "stop"):
             self.stt.stop()
+        if hasattr(self.stt, "cleanup"):
+            self.stt.cleanup()
         if hasattr(self.tts, "cleanup"):
             self.tts.cleanup()
         logger.info("Fresh Buddy shutdown complete.")
@@ -97,7 +123,11 @@ class FreshBuddy:
                     pass
 
                 # Listen for wake word or direct command
-                audio_data = self.stt.listen(timeout=30)
+                audio_data = self.stt.listen(
+                    timeout=self.config.stt_main_timeout,
+                    end_silence_timeout=self.config.stt_end_silence_timeout,
+                    chunk_frames=getattr(self.config, "stt_chunk_frames", 512),
+                )
 
                 if audio_data:
                     text = self.stt.transcribe(audio_data)
@@ -133,7 +163,11 @@ class FreshBuddy:
         self._speak("Yes?")
 
         # Listen for command after wake
-        audio_data = self.stt.listen(timeout=10)
+        audio_data = self.stt.listen(
+            timeout=self.config.stt_followup_timeout,
+            end_silence_timeout=self.config.stt_followup_end_silence_timeout,
+            chunk_frames=getattr(self.config, "stt_chunk_frames", 512),
+        )
         if audio_data:
             command = self.stt.transcribe(audio_data)
             self._handle_command(command)
@@ -166,8 +200,12 @@ class FreshBuddy:
     def _handle_chat_message(self, message: str, callback):
         """Handle a chat message from the dev console. Calls callback(response, expression) when done."""
         self.expressions.show_expression("thinking")
-        raw = self.llm.generate(message)
-        response, emotion = self._parse_response(raw)
+        with self._chat_lock:
+            self._append_chat_history("user", message)
+            conversation = [dict(item) for item in self._chat_history]
+            raw = self.llm.chat(conversation)
+            response, emotion = self._parse_response(raw)
+            self._append_chat_history("assistant", response)
         self._speak(response, post_expression=emotion)
         callback(response, emotion)
 
@@ -221,7 +259,11 @@ def main():
         print("Testing TTS...")
         tts.speak("Ciao, sono Fresh Buddy!")
         print("Testing STT... Speak now:")
-        audio = stt.listen(timeout=5)
+        audio = stt.listen(
+            timeout=config.stt_main_timeout,
+            end_silence_timeout=config.stt_end_silence_timeout,
+            chunk_frames=getattr(config, "stt_chunk_frames", 512),
+        )
         if audio:
             text = stt.transcribe(audio)
             print(f"You said: {text}")

@@ -339,6 +339,58 @@ class TestHeadlessMode(unittest.TestCase):
         buddy.stt.listen.assert_not_called()
 
 
+class TestChatHistory(unittest.TestCase):
+    """Test that interactive chat keeps a linear message history."""
+
+    def setUp(self):
+        self.config_patcher = patch("bmo.main.Config")
+        self.display_patcher = patch("bmo.main.OLEDDisplay")
+        self.stt_patcher = patch("bmo.main.ParakeetSTT")
+        self.tts_patcher = patch("bmo.main.PiperTTS")
+        self.llm_patcher = patch("bmo.main.LLMClient")
+        self.meeting_patcher = patch("bmo.main.MeetingAssistant")
+        self.ps_configure_patcher = patch("bmo.face.preview_server.configure")
+
+        self.mock_config_cls = self.config_patcher.start()
+        self.mock_config = MagicMock()
+        self.mock_config_cls.load.return_value = self.mock_config
+        self.mock_display = self.display_patcher.start()
+        self.mock_stt = self.stt_patcher.start()
+        self.mock_tts = self.tts_patcher.start()
+        self.mock_llm = self.llm_patcher.start()
+        self.mock_meeting = self.meeting_patcher.start()
+        self.ps_configure_patcher.start()
+
+    def tearDown(self):
+        self.config_patcher.stop()
+        self.display_patcher.stop()
+        self.stt_patcher.stop()
+        self.tts_patcher.stop()
+        self.llm_patcher.stop()
+        self.meeting_patcher.stop()
+        self.ps_configure_patcher.stop()
+
+    def test_chat_message_history_is_preserved_between_turns(self):
+        """Each chat turn must include the previous turns in order."""
+        buddy = FreshBuddy(self.mock_config)
+        buddy.llm.chat.side_effect = ["Prima risposta", "Seconda risposta"]
+
+        with patch.object(buddy, "_speak"), patch.object(buddy.expressions, "show_expression"):
+            callback = Mock()
+            buddy._handle_chat_message("Ciao", callback)
+            buddy._handle_chat_message("E tu?", callback)
+
+        first_history = buddy.llm.chat.call_args_list[0].args[0]
+        second_history = buddy.llm.chat.call_args_list[1].args[0]
+
+        self.assertEqual(first_history[0]["role"], "system")
+        self.assertEqual(first_history[1], {"role": "user", "content": "Ciao"})
+
+        self.assertEqual(second_history[1], {"role": "user", "content": "Ciao"})
+        self.assertEqual(second_history[2], {"role": "assistant", "content": "Prima risposta"})
+        self.assertEqual(second_history[3], {"role": "user", "content": "E tu?"})
+
+
 # ── Signal handling and shutdown ────────────────────────────────────────────
 
 class TestShutdownSequence(unittest.TestCase):
